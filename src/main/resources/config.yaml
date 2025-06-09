@@ -1,0 +1,53 @@
+# 小文件合并工具配置文件
+# 版本: 1.0
+
+# Spark作业配置
+spark:
+  job-parameters:
+    spark.sql.parquet.compression.codec: snappy  # 输出文件压缩格式
+    spark.sql.sources.partitionOverwriteMode: dynamic  # 动态分区覆盖模式
+    spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version: 2  # 输出提交器版本
+    spark.executor.memory: 4g  # 执行器内存
+    spark.driver.memory: 2g    # 驱动器内存
+    spark.executor.cores: 2    # 每个执行器的核心数
+    spark.executor.instances: 5 # 执行器实例数
+
+# 文件合并目标大小设置
+file-block-size: 128MB  # 目标文件大小(支持单位: B, KB, MB, GB)，可选参数，不配置默认为 hdfs 文件块大小
+
+# 合并参数配置
+merge:
+  # 输出文件配置
+  temp-dir: /tmp/merge_temp  # 临时目录位置
+  # 合并策略配置
+  strategy-class: com.dayu.smallfile.strategy.impl.DefaultMergeStrategy  # 默认合并策略类
+
+# 扫描配置
+scan:
+  # 扫描策略配置
+  strategy-class: com.dayu.smallfile.strategy.impl.HiveTableScanStrategy  # 默认扫描策略类
+  # Hive表扫描配置
+  hive-databases:
+    - db-name:   db1 # 数据库1
+      includes: stg_.*,ods_.*  # 包含的表名模式(正则)，不配置则包含所有表
+      excludes: test_.*,tmp_.* # 排除的表名模式(正则)，不配置则不排除任何表
+    - db-name:   db2 # 数据库1
+      includes:   # 空值表示包含所有表
+      excludes: pat_.*  # 排除特定表
+
+# 线程池配置
+thread-pool:
+  size: 10  # 线程池大小
+  timeout: 2m  # 线程池空闲超时时间(支持单位: s, m, h)
+  queue-size: 100  # 任务队列大小
+
+# 日志与报告配置
+report:
+  output-dir: /var/log/merge-tool  # 报告输出目录
+
+# 高级配置
+advanced:
+  metadata-cache: true  # 是否启用元数据缓存
+  dry-run: false  # 试运行模式(不实际执行合并)
+  cleanup: true  # 合并后是否清理原文件
+  backup-dir: /backup/merge  # 备份目录位置，当cleanup=false时必须配置 

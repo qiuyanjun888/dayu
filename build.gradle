@@ -1,0 +1,98 @@
+plugins {
+    id 'java'
+    id 'application'
+    id 'io.freefair.lombok' version '6.6.3'
+}
+
+group = 'com.dayu'
+version = '1.0.0'
+sourceCompatibility = JavaVersion.VERSION_17
+targetCompatibility = JavaVersion.VERSION_17
+
+ext {
+    sparkVersion = '3.3.0'
+    hadoopVersion = '3.3.1'
+    hiveVersion = '3.1.2'
+    slf4jVersion = '1.7.36'
+    logbackVersion = '1.5.13'
+    jacksonVersion = '2.13.3'
+    snakeyamlVersion = '1.33'
+    commonsCliVersion = '1.5.0'
+    poiVersion = '5.2.5'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Spark 依赖
+    compileOnly "org.apache.spark:spark-core_2.12:${sparkVersion}"
+    compileOnly "org.apache.spark:spark-sql_2.12:${sparkVersion}"
+    compileOnly "org.apache.spark:spark-hive_2.12:${sparkVersion}"
+    compileOnly "org.apache.spark:spark-launcher_2.12:${sparkVersion}"
+
+    // Hadoop 依赖
+    compileOnly "org.apache.hadoop:hadoop-client:${hadoopVersion}"
+    compileOnly "org.apache.hadoop:hadoop-common:${hadoopVersion}"
+    compileOnly "org.apache.hadoop:hadoop-hdfs:${hadoopVersion}"
+
+    // Hive 依赖
+    compileOnly "org.apache.hive:hive-exec:${hiveVersion}"
+    compileOnly "org.apache.hive:hive-metastore:${hiveVersion}"
+
+    // 日志依赖
+    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
+    implementation "ch.qos.logback:logback-classic:${logbackVersion}"
+
+    // YAML 解析
+    implementation "org.yaml:snakeyaml:${snakeyamlVersion}"
+
+    // JSON 处理
+//    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+//    implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
+
+    // 命令行参数解析
+    implementation "commons-cli:commons-cli:${commonsCliVersion}"
+
+    // Excel 报表生成
+    implementation "org.apache.poi:poi:${poiVersion}"
+    implementation "org.apache.poi:poi-ooxml:${poiVersion}"
+    implementation "org.apache.poi:poi-ooxml-full:${poiVersion}"
+    implementation "org.apache.xmlbeans:xmlbeans:5.1.1"
+}
+
+application {
+    mainClass = 'com.dayu.smallfile.SmallFileMergeApp'
+}
+
+jar {
+    manifest {
+        attributes(
+                'Main-Class': 'com.dayu.smallfile.SmallFileMergeApp'
+        )
+    }
+}
+
+// 创建包含所有依赖的 fat jar
+tasks.register('fatJar', Jar) {
+    archiveClassifier = ''
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    
+    from sourceSets.main.output
+    dependsOn configurations.runtimeClasspath
+    from {
+        configurations.runtimeClasspath.findAll { it.name.endsWith('jar') }.collect { zipTree(it) }
+    }
+    
+    manifest {
+        attributes(
+                'Main-Class': 'com.dayu.smallfile.SmallFileMergeApp'
+        )
+    }
+}
+
+// 默认编码设置为UTF-8
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+} 
