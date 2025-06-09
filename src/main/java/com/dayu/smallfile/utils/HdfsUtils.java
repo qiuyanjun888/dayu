@@ -2,6 +2,7 @@ package com.dayu.smallfile.utils;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -20,7 +21,7 @@ public class HdfsUtils {
         try {
             Configuration hadoopConf = new Configuration();
             FileSystem fs = FileSystem.get(hadoopConf);
-            return fs.getDefaultBlockSize();
+            return fs.getDefaultBlockSize(new Path("/"));
         } catch (Exception e) {
             logger.warn("获取HDFS默认块大小失败", e);
             throw e;

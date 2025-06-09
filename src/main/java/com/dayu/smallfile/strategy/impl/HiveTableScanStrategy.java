@@ -5,6 +5,7 @@ import com.dayu.smallfile.config.ScanConfig;
 import com.dayu.smallfile.model.HiveTblMergePath;
 import com.dayu.smallfile.strategy.ScanStrategy;
 import com.dayu.smallfile.utils.DayuStringUtils;
+import com.dayu.smallfile.utils.HdfsUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -43,7 +44,14 @@ public class HiveTableScanStrategy implements ScanStrategy {
             List<ScanConfig.HiveDatabase> databases = config.getScan().getHiveDatabases();
 
             // 目标文件大小，用于判断是否为小文件
-            long fileBlockSize = DayuStringUtils.parseSize(config.getFileBlockSize());
+            long fileBlockSize = 0l;
+            String size = config.getFileBlockSize();
+            if (StringUtils.isNotEmpty(size)) {
+                fileBlockSize = DayuStringUtils.parseSize(size);
+            } else {
+                fileBlockSize = HdfsUtils.getHdfsDefaultBlockSize();
+            }
+
             
             // 遍历配置的数据库
             for (ScanConfig.HiveDatabase db : databases) {
@@ -76,7 +84,7 @@ public class HiveTableScanStrategy implements ScanStrategy {
                         List<String> matchedTables = allTables.stream()
                                 .filter(tableName -> (includePatterns.isEmpty() || matchesAny(tableName, includePatterns))
                                         && (excludePatterns.isEmpty() || !matchesAny(tableName, excludePatterns)))
-                                .collect(Collectors.toList());
+                                .toList();
 
                         logger.info("数据库 {} 中匹配的表数量: {}", dbName, matchedTables.size());
 

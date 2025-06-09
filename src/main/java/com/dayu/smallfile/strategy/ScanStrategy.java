@@ -1,7 +1,6 @@
 package com.dayu.smallfile.strategy;
 
 import com.dayu.smallfile.config.Config;
-import com.dayu.smallfile.config.ScanConfig;
 import com.dayu.smallfile.model.HiveTblMergePath;
 
 import java.util.List;

@@ -12,7 +12,6 @@ gradle-app.setting
 *.iml
 *.iws
 *.ipr
-*.iws
 .idea_modules/
 out/
 

@@ -14,7 +14,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
-import java.nio.file.Files;
 import java.util.List;
 
 /**
@@ -23,8 +22,8 @@ import java.util.List;
 public class SmallFileMergeApplication {
     private static final Logger logger = LoggerFactory.getLogger(SmallFileMergeApplication.class);
     
-    private Config config;
-    private PluginManager pluginManager;
+    private final Config config;
+    private final PluginManager pluginManager;
     private List<HiveTblMergeResult> results;
     
     public SmallFileMergeApplication() {

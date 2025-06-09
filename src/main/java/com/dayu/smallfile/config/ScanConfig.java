@@ -3,7 +3,6 @@ package com.dayu.smallfile.config;
 import lombok.Data;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 扫描配置类

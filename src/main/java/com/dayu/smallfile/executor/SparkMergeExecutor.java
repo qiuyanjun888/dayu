@@ -4,7 +4,6 @@ import com.dayu.smallfile.config.Config;
 import com.dayu.smallfile.model.HiveTblMergePath;
 import com.dayu.smallfile.model.HiveTblMergeResult;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.ContentSummary;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
