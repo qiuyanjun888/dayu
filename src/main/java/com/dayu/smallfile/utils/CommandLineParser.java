@@ -14,7 +14,7 @@ public class CommandLineParser {
         options = new Options();
         
         // 配置文件选项
-        options.addOption(Option.builder("c")
+        options.addOption(Option.builder("f")
                 .longOpt("conf")
                 .hasArg()
                 .argName("FILE")

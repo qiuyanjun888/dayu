@@ -15,6 +15,9 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.time.Duration;
+import java.time.Instant;
 
 /**
  * 默认文件合并策略实现
@@ -31,6 +34,16 @@ public class HiveTableMergeStrategy implements MergeStrategy {
             logger.info("没有需要合并的路径");
             return results;
         }
+        
+        // 记录开始时间
+        Instant startTime = Instant.now();
+        
+        // 任务统计计数器
+        int totalTasks = mergePaths.size();
+        AtomicInteger completedTasks = new AtomicInteger(0);
+        AtomicInteger successTasks = new AtomicInteger(0);
+        AtomicInteger failedTasks = new AtomicInteger(0);
+        
         SparkSession spark = null;
         FileSystem fs = null;
         try {
@@ -56,8 +69,21 @@ public class HiveTableMergeStrategy implements MergeStrategy {
                 try {
                     HiveTblMergeResult result = future.get();
                     results.add(result);
+                    successTasks.incrementAndGet();
                 } catch (InterruptedException | ExecutionException e) {
                     logger.error("合并任务执行失败", e);
+                    failedTasks.incrementAndGet();
+                } finally {
+                    int completed = completedTasks.incrementAndGet();
+                    int remaining = totalTasks - completed;
+                    Duration duration = Duration.between(startTime, Instant.now());
+                    String runTime = String.format("%02d:%02d:%02d", 
+                            duration.toHours(), 
+                            duration.toMinutesPart(), 
+                            duration.toSecondsPart());
+                    
+                    logger.info("任务进度 - 总任务数: {}, 已完成: {}, 成功: {}, 失败: {}, 剩余: {}, 运行时间: {}", 
+                            totalTasks, completed, successTasks.get(), failedTasks.get(), remaining, runTime);
                 }
             }
             
@@ -72,6 +98,16 @@ public class HiveTableMergeStrategy implements MergeStrategy {
             logger.error("合并过程中发生错误", e);
             throw e;
         } finally {
+            // 最终任务统计
+            Duration totalDuration = Duration.between(startTime, Instant.now());
+            String totalRunTime = String.format("%02d:%02d:%02d", 
+                    totalDuration.toHours(), 
+                    totalDuration.toMinutesPart(), 
+                    totalDuration.toSecondsPart());
+            
+            logger.info("任务完成统计 - 总任务数: {}, 已完成: {}, 成功: {}, 失败: {}, 剩余: 0, 总运行时间: {}", 
+                    totalTasks, completedTasks.get(), successTasks.get(), failedTasks.get(), totalRunTime);
+            
             // 关闭Spark会话
             if (spark != null) {
                 spark.close();

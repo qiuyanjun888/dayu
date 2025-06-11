@@ -2,12 +2,20 @@ plugins {
     id 'java'
     id 'application'
     id 'io.freefair.lombok' version '6.6.3'
+    id 'idea'
 }
 
 group = 'com.dayu'
 version = '1.0.0'
 sourceCompatibility = JavaVersion.VERSION_17
 targetCompatibility = JavaVersion.VERSION_17
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = false
+    }
+}
 
 ext {
     sparkVersion = '3.3.0'
@@ -19,6 +27,8 @@ ext {
     snakeyamlVersion = '1.33'
     commonsCliVersion = '1.5.0'
     poiVersion = '5.2.5'
+    junitVersion = '4.13.2'
+    derbyVersion = '10.14.2.0'
 }
 
 repositories {
@@ -26,11 +36,9 @@ repositories {
 }
 
 dependencies {
-    // Spark 依赖
-    compileOnly "org.apache.spark:spark-core_2.12:${sparkVersion}"
-    compileOnly "org.apache.spark:spark-sql_2.12:${sparkVersion}"
-    compileOnly "org.apache.spark:spark-hive_2.12:${sparkVersion}"
-    compileOnly "org.apache.spark:spark-launcher_2.12:${sparkVersion}"
+    // 日志依赖
+    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
+    implementation "ch.qos.logback:logback-classic:${logbackVersion}"
 
     // Hadoop 依赖
     compileOnly "org.apache.hadoop:hadoop-client:${hadoopVersion}"
@@ -41,16 +49,14 @@ dependencies {
     compileOnly "org.apache.hive:hive-exec:${hiveVersion}"
     compileOnly "org.apache.hive:hive-metastore:${hiveVersion}"
 
-    // 日志依赖
-    implementation "org.slf4j:slf4j-api:${slf4jVersion}"
-    implementation "ch.qos.logback:logback-classic:${logbackVersion}"
+    // Spark 依赖
+    compileOnly "org.apache.spark:spark-core_2.12:${sparkVersion}"
+    compileOnly "org.apache.spark:spark-sql_2.12:${sparkVersion}"
+    compileOnly "org.apache.spark:spark-hive_2.12:${sparkVersion}"
+    compileOnly "org.apache.spark:spark-launcher_2.12:${sparkVersion}"
 
     // YAML 解析
     implementation "org.yaml:snakeyaml:${snakeyamlVersion}"
-
-    // JSON 处理
-//    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
-//    implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
 
     // 命令行参数解析
     implementation "commons-cli:commons-cli:${commonsCliVersion}"
@@ -60,6 +66,25 @@ dependencies {
     implementation "org.apache.poi:poi-ooxml:${poiVersion}"
     implementation "org.apache.poi:poi-ooxml-full:${poiVersion}"
     implementation "org.apache.xmlbeans:xmlbeans:5.1.1"
+
+    // ============= 测试相关依赖 =============
+    // 基础测试框架
+    testImplementation "junit:junit:${junitVersion}"
+
+    // Hadoop MiniCluster 测试依赖
+    testImplementation ("org.apache.hadoop:hadoop-minicluster:${hadoopVersion}"){transitive = true }
+    testImplementation ("org.apache.hadoop:hadoop-mapreduce-client-jobclient:${hadoopVersion}"){transitive = true }
+    // 测试时需要这些实现依赖
+    testImplementation ("org.apache.hadoop:hadoop-common:${hadoopVersion}"){transitive = true }
+    testImplementation ("org.apache.hadoop:hadoop-hdfs:${hadoopVersion}"){transitive = true }
+    testImplementation ("org.apache.hive:hive-metastore:${hiveVersion}") {transitive = true }
+    testImplementation("org.apache.hive:hive-exec:${hiveVersion}") {transitive = true }
+
+    // Hive 测试依赖
+    testImplementation ("org.apache.derby:derby:${derbyVersion}") {transitive = true }
+
+    // Spark 测试依赖
+    testImplementation ("org.apache.spark:spark-sql_2.12:${sparkVersion}"){transitive = true }
 }
 
 application {
@@ -95,4 +120,27 @@ tasks.register('fatJar', Jar) {
 // 默认编码设置为UTF-8
 tasks.withType(JavaCompile) {
     options.encoding = 'UTF-8'
-} 
+}
+
+// 解决测试依赖冲突
+configurations.all {
+    resolutionStrategy {
+        force 'org.apache.logging.log4j:log4j-api:2.17.1'
+        force 'org.apache.logging.log4j:log4j-core:2.17.1'
+    }
+}
+/*
+configurations.all {
+//    exclude group: 'org.slf4j', module: 'slf4j-log4j12'
+//    exclude group: 'log4j', module: 'log4j'
+    exclude group: 'javax.servlet', module: 'servlet-api'
+    exclude group: 'javax.servlet.jsp', module: 'jsp-api'
+    exclude group: 'org.mortbay.jetty', module: 'servlet-api-3.0'
+
+    resolutionStrategy {
+        force "com.google.guava:guava:30.1.1-jre"
+        force "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+        force "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
+
+    }
+}*/

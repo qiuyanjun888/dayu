@@ -5,6 +5,10 @@ import com.dayu.smallfile.model.HiveTblMergeResult;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xddf.usermodel.chart.*;
+import org.apache.poi.xddf.usermodel.chart.ChartTypes;
+import org.apache.poi.xddf.usermodel.chart.LegendPosition;
+import org.apache.poi.xddf.usermodel.chart.XDDFChartData;
+import org.apache.poi.xddf.usermodel.chart.XDDFChartLegend;
 import org.apache.poi.xssf.usermodel.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,10 +58,10 @@ public class ReportGenerator {
         // 生成Excel报告
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             // 创建数据表格
-            createDataSheet(workbook);
+            XSSFSheet dataSheet = createDataSheet(workbook);
             
             // 创建图表
-            createChartSheet(workbook);
+            createChartSheet(workbook, dataSheet);
             
             // 写入文件
             try (FileOutputStream fos = new FileOutputStream(reportFile)) {
@@ -73,8 +77,9 @@ public class ReportGenerator {
      * 创建数据表格
      *
      * @param workbook 工作簿
+     * @return 创建的数据表格
      */
-    private void createDataSheet(XSSFWorkbook workbook) {
+    private XSSFSheet createDataSheet(XSSFWorkbook workbook) {
         XSSFSheet sheet = workbook.createSheet("合并结果数据");
         
         // 设置列宽
@@ -90,10 +95,8 @@ public class ReportGenerator {
         sheet.setColumnWidth(9, 10 * 256);  // 耗时(秒)
         sheet.setColumnWidth(10, 30 * 256); // 错误信息
         
-        // 创建表头样式
+        // 创建表头样式 - 只加粗，不设置背景颜色
         CellStyle headerStyle = workbook.createCellStyle();
-        headerStyle.setFillForegroundColor(IndexedColors.LIGHT_BLUE.getIndex());
-        headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
         Font headerFont = workbook.createFont();
         headerFont.setBold(true);
         headerStyle.setFont(headerFont);
@@ -126,125 +129,192 @@ public class ReportGenerator {
             row.createCell(9).setCellValue(result.getDuration() / 1000.0);
             row.createCell(10).setCellValue(result.getErrorMessage() != null ? result.getErrorMessage() : "");
         }
+        
+        return sheet;
     }
     
     /**
      * 创建图表
      *
      * @param workbook 工作簿
+     * @param dataSheet 数据表格，用于引用数据
      */
-    private void createChartSheet(XSSFWorkbook workbook) {
-        XSSFSheet sheet = workbook.createSheet("合并结果图表");
+    private void createChartSheet(XSSFWorkbook workbook, XSSFSheet dataSheet) {
+        XSSFSheet chartSheet = workbook.createSheet("合并结果图表");
         
-        // 准备图表数据
-        int rowCount = results.size();
+        // 创建图表数据表格
+        createChartData(workbook, chartSheet);
         
-        // 创建数据区域
-        Row headerRow = sheet.createRow(0);
-        headerRow.createCell(0).setCellValue("路径");
+        // 创建文件数量对比图表
+        createFileCountChart(workbook, chartSheet, 2, 15);
+        
+        // 创建平均文件大小对比图表
+        createFileSizeChart(workbook, chartSheet, 18, 31);
+        
+        // 确保所有图表数据源被正确识别
+        chartSheet.enableLocking();
+    }
+    
+    /**
+     * 创建图表数据表格
+     * 
+     * @param workbook 工作簿
+     * @param chartSheet 图表工作表
+     */
+    private void createChartData(XSSFWorkbook workbook, XSSFSheet chartSheet) {
+        // 设置列宽自适应
+        chartSheet.setDefaultColumnWidth(12);
+        
+        // 创建数据表格
+        Row headerRow = chartSheet.createRow(0);
+        headerRow.createCell(0).setCellValue("表");
         headerRow.createCell(1).setCellValue("合并前文件数");
         headerRow.createCell(2).setCellValue("合并后文件数");
         headerRow.createCell(3).setCellValue("合并前平均大小(MB)");
         headerRow.createCell(4).setCellValue("合并后平均大小(MB)");
         
+        // 填充数据
         for (int i = 0; i < results.size(); i++) {
             HiveTblMergeResult result = results.get(i);
-            Row row = sheet.createRow(i + 1);
+            Row row = chartSheet.createRow(i + 1);
             
-            String label = result.getDbName() + "." + result.getTableName();
-            row.createCell(0).setCellValue(label);
+            row.createCell(0).setCellValue(result.getTableName()); // 只显示表名
             row.createCell(1).setCellValue(result.getBeforeFileCount());
             row.createCell(2).setCellValue(result.getAfterFileCount());
             row.createCell(3).setCellValue(formatSize(result.getBeforeAvgSize()));
             row.createCell(4).setCellValue(formatSize(result.getAfterAvgSize()));
         }
         
-        // 创建文件数量对比图表
-        createBarChart(sheet, 1, rowCount, 0, 2, "文件数量对比", "表", "文件数量", 2, 2, 12, 15);
-        
-        // 创建平均文件大小对比图表
-        createBarChart(sheet, 1, rowCount, 0, 4, "平均文件大小对比(MB)", "表", "平均大小(MB)", 2, 18, 12, 15);
+        // 设置列宽自适应
+        for (int i = 0; i < 5; i++) {
+            chartSheet.autoSizeColumn(i);
+        }
     }
     
     /**
-     * 创建柱状图
-     *
-     * @param sheet 工作表
-     * @param startRow 数据开始行
-     * @param endRow 数据结束行
-     * @param categoryCol 分类列
-     * @param endValueCol 值结束列
-     * @param title 图表标题
-     * @param categoryAxisTitle 分类轴标题
-     * @param valueAxisTitle 值轴标题
-     * @param col1 图表左上角列
-     * @param row1 图表左上角行
-     * @param col2 图表右下角列
-     * @param row2 图表右下角行
+     * 创建文件数量对比图表
+     * 
+     * @param workbook 工作簿
+     * @param chartSheet 图表工作表
+     * @param startRow 图表起始行
+     * @param endRow 图表结束行
      */
-    private void createBarChart(XSSFSheet sheet, int startRow, int endRow, int categoryCol, int endValueCol, 
-                               String title, String categoryAxisTitle, String valueAxisTitle, 
-                               int col1, int row1, int col2, int row2) {
-        XSSFDrawing drawing = sheet.createDrawingPatriarch();
-        XSSFClientAnchor anchor = drawing.createAnchor(0, 0, 0, 0, col1, row1, col2, row2);
+    private void createFileCountChart(XSSFWorkbook workbook, XSSFSheet chartSheet, int startRow, int endRow) {
+        XSSFDrawing drawing = chartSheet.createDrawingPatriarch();
+        XSSFClientAnchor anchor = drawing.createAnchor(0, 0, 0, 0, 0, startRow, 10, endRow);
         
         XSSFChart chart = drawing.createChart(anchor);
-        chart.setTitleText(title);
+        chart.setTitleText("文件数量对比");
         chart.setTitleOverlay(false);
-
-
-        XDDFChartLegend legend = chart.getOrAddLegend();
-        legend.setPosition(LegendPosition.TOP_RIGHT);
         
+        // 设置图例
+        XDDFChartLegend legend = chart.getOrAddLegend();
+        legend.setPosition(LegendPosition.BOTTOM);
+        
+        // 创建坐标轴
         XDDFCategoryAxis categoryAxis = chart.createCategoryAxis(AxisPosition.BOTTOM);
-        categoryAxis.setTitle(categoryAxisTitle);
+        categoryAxis.setTitle("表");
         
         XDDFValueAxis valueAxis = chart.createValueAxis(AxisPosition.LEFT);
-        valueAxis.setTitle(valueAxisTitle);
+        valueAxis.setTitle("文件数量");
+        valueAxis.setCrosses(AxisCrosses.AUTO_ZERO);
         
         // 获取数据范围
-        String categoryRange = sheet.getSheetName() + "!$" + getColumnName(categoryCol + 1) + "$" + (startRow + 1) + ":$" + getColumnName(categoryCol + 1) + "$" + (endRow + 1);
-        XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(sheet, CellRangeAddress.valueOf(categoryRange));
+        int rowCount = results.size();
+        String categoryRange = chartSheet.getSheetName() + "!$A$2:$A$" + (rowCount + 1);
+        XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(workbook.getSheet(chartSheet.getSheetName()), CellRangeAddress.valueOf(categoryRange));
         
+        // 创建图表数据
         XDDFChartData data = chart.createData(ChartTypes.BAR, categoryAxis, valueAxis);
-        XDDFChartData.Series series1 = null;
-        XDDFChartData.Series series2 = null;
+        data.setVaryColors(false);
         
-        if (endValueCol >= 2) {
-            // 合并前数据系列
-            String valuesRange1 = sheet.getSheetName() + "!$" + getColumnName(1 + 1) + "$" + (startRow + 1) + ":$" + getColumnName(1 + 1) + "$" + (endRow + 1);
-            XDDFNumericalDataSource<Double> values1 = XDDFDataSourcesFactory.fromNumericCellRange(sheet, CellRangeAddress.valueOf(valuesRange1));
-            series1 = data.addSeries(categories, values1);
-            series1.setTitle("合并前", null);
-        }
+        // 合并前文件数
+        String beforeRange = chartSheet.getSheetName() + "!$B$2:$B$" + (rowCount + 1);
+        XDDFNumericalDataSource<Double> beforeValues = XDDFDataSourcesFactory.fromNumericCellRange(workbook.getSheet(chartSheet.getSheetName()), CellRangeAddress.valueOf(beforeRange));
+        XDDFChartData.Series beforeSeries = data.addSeries(categories, beforeValues);
+        beforeSeries.setTitle("合并前文件数", null);
         
-        if (endValueCol >= 3) {
-            // 合并后数据系列
-            String valuesRange2 = sheet.getSheetName() + "!$" + getColumnName(2 + 1) + "$" + (startRow + 1) + ":$" + getColumnName(2 + 1) + "$" + (endRow + 1);
-            XDDFNumericalDataSource<Double> values2 = XDDFDataSourcesFactory.fromNumericCellRange(sheet, CellRangeAddress.valueOf(valuesRange2));
-            series2 = data.addSeries(categories, values2);
-            series2.setTitle("合并后", null);
-        }
-        
-        if (endValueCol >= 5) {
-            // 合并前平均大小数据系列
-            String valuesRange3 = sheet.getSheetName() + "!$" + getColumnName(3 + 1) + "$" + (startRow + 1) + ":$" + getColumnName(3 + 1) + "$" + (endRow + 1);
-            XDDFNumericalDataSource<Double> values3 = XDDFDataSourcesFactory.fromNumericCellRange(sheet, CellRangeAddress.valueOf(valuesRange3));
-            series1 = data.addSeries(categories, values3);
-            series1.setTitle("合并前平均大小", null);
-            
-            // 合并后平均大小数据系列
-            String valuesRange4 = sheet.getSheetName() + "!$" + getColumnName(4 + 1) + "$" + (startRow + 1) + ":$" + getColumnName(4 + 1) + "$" + (endRow + 1);
-            XDDFNumericalDataSource<Double> values4 = XDDFDataSourcesFactory.fromNumericCellRange(sheet, CellRangeAddress.valueOf(valuesRange4));
-            series2 = data.addSeries(categories, values4);
-            series2.setTitle("合并后平均大小", null);
-        }
+        // 合并后文件数
+        String afterRange = chartSheet.getSheetName() + "!$C$2:$C$" + (rowCount + 1);
+        XDDFNumericalDataSource<Double> afterValues = XDDFDataSourcesFactory.fromNumericCellRange(workbook.getSheet(chartSheet.getSheetName()), CellRangeAddress.valueOf(afterRange));
+        XDDFChartData.Series afterSeries = data.addSeries(categories, afterValues);
+        afterSeries.setTitle("合并后文件数", null);
         
         // 设置为柱状图
         XDDFBarChartData barChartData = (XDDFBarChartData) data;
         barChartData.setBarDirection(BarDirection.COL);
-
+        barChartData.setBarGrouping(BarGrouping.CLUSTERED); // 确保柱子并排显示
+        barChartData.setOverlap((byte)0); // 设置柱子之间不重叠
+        barChartData.setGapWidth(150); // 设置组间距
+        
+        // 绘制图表
         chart.plot(data);
+        
+        // 确保图表数据表关联到图表
+        chart.setAutoTitleDeleted(false);
+    }
+    
+    /**
+     * 创建平均文件大小对比图表
+     * 
+     * @param workbook 工作簿
+     * @param chartSheet 图表工作表
+     * @param startRow 图表起始行
+     * @param endRow 图表结束行
+     */
+    private void createFileSizeChart(XSSFWorkbook workbook, XSSFSheet chartSheet, int startRow, int endRow) {
+        XSSFDrawing drawing = chartSheet.createDrawingPatriarch();
+        XSSFClientAnchor anchor = drawing.createAnchor(0, 0, 0, 0, 0, startRow, 10, endRow);
+        
+        XSSFChart chart = drawing.createChart(anchor);
+        chart.setTitleText("平均文件大小对比(MB)");
+        chart.setTitleOverlay(false);
+        
+        // 设置图例
+        XDDFChartLegend legend = chart.getOrAddLegend();
+        legend.setPosition(LegendPosition.BOTTOM);
+        
+        // 创建坐标轴
+        XDDFCategoryAxis categoryAxis = chart.createCategoryAxis(AxisPosition.BOTTOM);
+        categoryAxis.setTitle("表");
+        
+        XDDFValueAxis valueAxis = chart.createValueAxis(AxisPosition.LEFT);
+        valueAxis.setTitle("平均大小(MB)");
+        valueAxis.setCrosses(AxisCrosses.AUTO_ZERO);
+        
+        // 获取数据范围
+        int rowCount = results.size();
+        String categoryRange = chartSheet.getSheetName() + "!$A$2:$A$" + (rowCount + 1);
+        XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(workbook.getSheet(chartSheet.getSheetName()), CellRangeAddress.valueOf(categoryRange));
+        
+        // 创建图表数据
+        XDDFChartData data = chart.createData(ChartTypes.BAR, categoryAxis, valueAxis);
+        data.setVaryColors(false);
+        
+        // 合并前平均大小
+        String beforeRange = chartSheet.getSheetName() + "!$D$2:$D$" + (rowCount + 1);
+        XDDFNumericalDataSource<Double> beforeValues = XDDFDataSourcesFactory.fromNumericCellRange(workbook.getSheet(chartSheet.getSheetName()), CellRangeAddress.valueOf(beforeRange));
+        XDDFChartData.Series beforeSeries = data.addSeries(categories, beforeValues);
+        beforeSeries.setTitle("合并前平均大小(MB)", null);
+        
+        // 合并后平均大小
+        String afterRange = chartSheet.getSheetName() + "!$E$2:$E$" + (rowCount + 1);
+        XDDFNumericalDataSource<Double> afterValues = XDDFDataSourcesFactory.fromNumericCellRange(workbook.getSheet(chartSheet.getSheetName()), CellRangeAddress.valueOf(afterRange));
+        XDDFChartData.Series afterSeries = data.addSeries(categories, afterValues);
+        afterSeries.setTitle("合并后平均大小(MB)", null);
+        
+        // 设置为柱状图
+        XDDFBarChartData barChartData = (XDDFBarChartData) data;
+        barChartData.setBarDirection(BarDirection.COL);
+        barChartData.setBarGrouping(BarGrouping.CLUSTERED); // 确保柱子并排显示
+        barChartData.setOverlap((byte)0); // 设置柱子之间不重叠
+        barChartData.setGapWidth(150); // 设置组间距
+        
+        // 绘制图表
+        chart.plot(data);
+        
+        // 确保图表数据表关联到图表
+        chart.setAutoTitleDeleted(false);
     }
     
     /**
