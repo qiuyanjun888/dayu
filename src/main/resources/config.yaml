@@ -51,3 +51,23 @@ advanced:
   dry-run: false  # 试运行模式(不实际执行合并)
   cleanup: true  # 合并后是否清理原文件
   backup-dir: /backup/merge  # 备份目录位置，当cleanup=false时必须配置 
+
+# HDFS文件压缩配置
+hdfs-compress:
+  # 生产者线程数
+  producer-threads: 3
+  # 消费者线程数
+  consumer-threads: 10
+  # 路径配置
+  paths:
+    - root-path: /data/1/log # 根路径
+      recursive: true # 是否递归
+      threshold: 1KB # 文件的阈值
+      includes: "*.txt,*.dat" # 需要压缩的文件正则表达式
+      excludes: "*.log,*.xls" # 不需要压缩的文件正则表达式
+
+    - root-path: /data/1/files # 根路径
+      recursive: false # 是否递归
+      threshold: 100MB # 文件的阈值
+      includes:  # 需要压缩的文件正则表达式, 不配置表示所有文件
+      excludes:  # 不需要压缩的文件正则表达式，不配置表示没有文件需要排除 

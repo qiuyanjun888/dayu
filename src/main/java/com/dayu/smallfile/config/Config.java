@@ -35,6 +35,9 @@ public class Config {
     // 报告配置
     private ReportConfig report;
     
+    // HDFS压缩配置
+    private HdfsCompressConfig hdfsCompress;
+    
     /**
      * 从YAML文件加载配置
      *
@@ -55,6 +58,7 @@ public class Config {
             this.threadPool = config.getThreadPool();
             this.advanced = config.getAdvanced();
             this.report = config.getReport();
+            this.hdfsCompress = config.getHdfsCompress();
             
             logger.info("配置加载完成");
         }
