@@ -234,7 +234,13 @@ public class HadoopHiveSparkIntegrationTest {
 
     @AfterClass
     public static void tearDown() throws Exception {
-        if (hiveMetaStoreClient != null) hiveMetaStoreClient.close();
+        if (hiveMetaStoreClient != null) {
+            try {
+                hiveMetaStoreClient.close();
+            } catch (Exception e) {
+                System.out.println("关闭Hive元数据客户端时出错: " + e.getMessage());
+            }
+        }
         if (miniMRCluster != null) miniMRCluster.shutdown();
         if (miniDFSCluster != null) miniDFSCluster.shutdown();
         if (sparkSession != null) sparkSession.stop();

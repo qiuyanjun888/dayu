@@ -53,10 +53,10 @@ public class SmallFileMergeLauncher {
         launcher.addAppArgs(argsStr.toString().split(" "));
         
         // 设置Spark配置
-        Map<String, String> sparkConfig = config.getSpark().getJobParameters();
-        for (Map.Entry<String, String> entry : sparkConfig.entrySet()) {
-            launcher.setConf(entry.getKey(), entry.getValue());
-        }
+//        Map<String, String> sparkConfig = config.getSpark().getJobParameters();
+//        for (Map.Entry<String, String> entry : sparkConfig.entrySet()) {
+//            launcher.setConf(entry.getKey(), entry.getValue());
+//        }
         
         // 启动Spark作业
         final CountDownLatch latch = new CountDownLatch(1);

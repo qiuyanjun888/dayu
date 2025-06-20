@@ -1,5 +1,6 @@
 package com.dayu.smallfile.config;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 import java.util.Map;
@@ -9,5 +10,6 @@ import java.util.Map;
  */
 @Data
 public class SparkConfig {
+    @JsonProperty("job-parameters")
     private Map<String, String> jobParameters;
 } 

@@ -121,7 +121,7 @@ public class HdfsCompressExecutor {
      * @param result 压缩结果
      * @throws IOException 如果扫描失败
      */
-    private void scanFiles(HdfsCompressPathConfig pathConfig, HdfsCompressResult result) throws IOException {
+    private void scanFiles(HdfsCompressPathConfig pathConfig, HdfsCompressResult result) throws IOException, InterruptedException {
         logger.info("开始扫描路径: {}", pathConfig.getRootPath());
         
         // 解析阈值

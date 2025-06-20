@@ -1,6 +1,7 @@
 package com.dayu.smallfile.executor;
 
 import com.dayu.smallfile.config.Config;
+import com.dayu.smallfile.config.SmallFileMergeConfig;
 import com.dayu.smallfile.model.HiveTblMergePath;
 import com.dayu.smallfile.model.HiveTblMergeResult;
 import org.apache.commons.lang3.StringUtils;
@@ -26,7 +27,6 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
     private final HiveTblMergePath mergePath;
     private final Config config;
     private final SparkSession spark;
-
     private final FileSystem fs;
     
     public SparkMergeExecutor(HiveTblMergePath mergePath, Config config, SparkSession spark, FileSystem fs) {
@@ -46,17 +46,19 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
         result.setBeforeAvgSize(mergePath.getDirSize() / mergePath.getFileCount());
         
         long startTime = System.currentTimeMillis();
-
+        
+        // 获取小文件合并配置
+        SmallFileMergeConfig mergeConfig = config.getSmallFileMerge();
 
         try {
             // 如果是试运行模式，跳过实际合并操作
-            if (config.getAdvanced().isDryRun()) {
+            if (mergeConfig.isDryRun()) {
                 result.markSkipped("试运行模式，跳过合并操作");
                 return result;
             }
             
             // 构建临时目录路径
-            String tempDir = config.getMerge().getTempDir() + "/" + mergePath.getTargetPath();
+            String tempDir = mergeConfig.getTempDir() + "/" + mergePath.getTargetPath();
             
             // 读取源数据
             Dataset<Row> df = spark.read().format(fileFormat).load(path);
@@ -76,8 +78,8 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
             result.setAfterAvgSize(contentSummary.getLength() / contentSummary.getFileCount());
             
             // 如果不是试运行模式，替换原目录
-            if (!config.getAdvanced().isDryRun()) {
-                replaceOriginalPath(fs, new Path(tempDir), new Path(path));
+            if (!mergeConfig.isDryRun()) {
+                replaceOriginalPath(fs, new Path(tempDir), new Path(path), mergeConfig);
             }
             
             result.markSuccess();
@@ -97,10 +99,11 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
      * @param fs 文件系统
      * @param tempPath 临时目录路径
      * @param originalPath 原目录路径
+     * @param mergeConfig 小文件合并配置
      * @throws IOException 如果操作文件系统失败
      */
-    private void replaceOriginalPath(FileSystem fs, Path tempPath, Path originalPath) throws IOException {
-        if (config.getAdvanced().isCleanup()) {
+    private void replaceOriginalPath(FileSystem fs, Path tempPath, Path originalPath, SmallFileMergeConfig mergeConfig) throws IOException {
+        if (mergeConfig.isCleanup()) {
             // 如果配置为清理原文件，则直接删除原目录
             logger.info("删除原目录: {}", originalPath);
             if (fs.exists(originalPath)) {
@@ -108,7 +111,7 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
             }
         } else {
             // 否则将原目录移动到备份目录
-            String backupDir = config.getAdvanced().getBackupDir();
+            String backupDir = mergeConfig.getBackupDir();
             if (StringUtils.isEmpty(backupDir)) {
                 throw new IOException("未配置备份目录，无法执行备份操作");
             }

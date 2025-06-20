@@ -1,6 +1,6 @@
 package com.dayu.smallfile.report;
 
-import com.dayu.smallfile.config.ReportConfig;
+import com.dayu.smallfile.config.SmallFileMergeConfig;
 import com.dayu.smallfile.model.HiveTblMergeResult;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.util.CellRangeAddress;
@@ -27,10 +27,10 @@ import java.util.List;
 public class ReportGenerator {
     private static final Logger logger = LoggerFactory.getLogger(ReportGenerator.class);
     
-    private final ReportConfig config;
+    private final SmallFileMergeConfig config;
     private final List<HiveTblMergeResult> results;
     
-    public ReportGenerator(ReportConfig config, List<HiveTblMergeResult> results) {
+    public ReportGenerator(SmallFileMergeConfig config, List<HiveTblMergeResult> results) {
         this.config = config;
         this.results = results;
     }
@@ -42,7 +42,7 @@ public class ReportGenerator {
      * @throws IOException 如果生成报告失败
      */
     public File generateReport() throws IOException {
-        String outputDir = config.getOutputDir();
+        String outputDir = config.getReportOutputDir();
         
         // 创建输出目录
         File dir = new File(outputDir);

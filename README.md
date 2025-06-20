@@ -27,7 +27,6 @@
 
 ### 扩展性设计:
 
-- **插件化架构**：各功能模块支持插件扩展
 - **RESTful API**：提供标准接口供外部系统集成
 - **配置中心**：动态调整运行参数
 - **多租户支持**：隔离不同业务线的资源和使用
@@ -39,11 +38,9 @@
 ### 功能特点
 
 - 支持扫描Hive表，自动识别需要合并的小文件
-- 支持自定义扫描策略和合并策略
 - 多线程并行处理，提高合并效率
 - 支持试运行模式，不实际执行合并
 - 生成详细的合并报告（Excel或CSV格式）
-- 插件化设计，支持自定义扩展
 
 ### 系统要求
 
@@ -97,49 +94,8 @@ java -jar build/libs/dayu-small-file-1.0.0.jar -c /path/to/config.yaml
 ### 命令行参数
 
 - `-c, --config <FILE>`: 指定配置文件路径
-- `-p, --plugin-jar <JAR>`: 指定插件JAR文件路径
 - `--local`: 本地模式运行，不使用SparkLauncher
 - `-h, --help`: 显示帮助信息
-
-### 自定义扩展
-
-#### 自定义扫描策略
-
-实现`com.dayu.smallfile.strategy.ScanStrategy`接口：
-
-```java
-public class CustomScanStrategy implements FileScanStrategy {
-    @Override
-    public List<HiveTblMergePath> scan(Config config) {
-        // 实现自定义扫描逻辑
-    }
-}
-```
-
-#### 自定义合并策略
-
-实现`com.dayu.smallfile.strategy.MergeStrategy`接口：
-
-```java
-public class CustomMergeStrategy implements FileMergeStrategy {
-    @Override
-    public List<HiveTblMergeResult> merge(List<HiveTblMergePath> mergePaths, Config config) {
-        // 实现自定义合并逻辑
-    }
-}
-```
-
-将自定义策略打包为JAR文件，并在配置文件中指定：
-
-```yaml
-scan:
-  strategy:
-    class: com.example.CustomScanStrategy
-
-merge:
-  strategy:
-    class: com.example.CustomMergeStrategy
-```
 
 ### 报告示例
 

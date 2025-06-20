@@ -1,7 +1,8 @@
 package com.dayu.smallfile.strategy.impl;
 
 import com.dayu.smallfile.config.Config;
-import com.dayu.smallfile.config.ScanConfig;
+import com.dayu.smallfile.config.SmallFileMergeConfig;
+import com.dayu.smallfile.model.HiveDatabase;
 import com.dayu.smallfile.model.HiveTblMergePath;
 import com.dayu.smallfile.strategy.ScanStrategy;
 import com.dayu.smallfile.utils.DayuStringUtils;
@@ -15,6 +16,7 @@ import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.MetaException;
+import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,12 +42,15 @@ public class HiveTableScanStrategy implements ScanStrategy {
             // 创建Hive元数据客户端
             metaStoreClient = createMetaStoreClient();
             
+            // 获取配置
+            SmallFileMergeConfig mergeConfig = config.getSmallFileMerge();
+            
             // 获取Hive数据库配置
-            List<ScanConfig.HiveDatabase> databases = config.getScan().getHiveDatabases();
+            List<HiveDatabase> databases = mergeConfig.getHiveDatabases();
 
             // 目标文件大小，用于判断是否为小文件
             long fileBlockSize = 0l;
-            String size = config.getFileBlockSize();
+            String size = mergeConfig.getHdfsBlockSize();
             if (StringUtils.isNotEmpty(size)) {
                 fileBlockSize = DayuStringUtils.parseSize(size);
             } else {
@@ -54,10 +59,20 @@ public class HiveTableScanStrategy implements ScanStrategy {
 
             
             // 遍历配置的数据库
-            for (ScanConfig.HiveDatabase db : databases) {
-
-                    String dbName = db.getDbName();
-                    logger.info("扫描数据库: {}", dbName);
+            for (HiveDatabase db : databases) {
+                String dbName = db.getDbName();
+                logger.info("扫描数据库: {}", dbName);
+                
+                // 首先检查数据库是否存在
+                try {
+                    // 获取所有数据库名称
+                    List<String> allDatabases = metaStoreClient.getAllDatabases();
+                    if (!allDatabases.contains(dbName)) {
+                        logger.error("数据库 {} 在Metastore中不存在，跳过处理", dbName);
+                        continue; // 跳过此数据库，继续下一个
+                    }
+                    
+                    // 数据库存在，继续处理
                     String includeStr = db.getIncludes();
                     String excludesStr = db.getExcludes();
 
@@ -65,7 +80,6 @@ public class HiveTableScanStrategy implements ScanStrategy {
                     if (StringUtils.isNotEmpty(includeStr)) {
                         includes = Arrays.asList(includeStr.split(","));
                     }
-
 
                     List<String> excludes = new ArrayList<>();
                     if (StringUtils.isNotEmpty(excludesStr)) {
@@ -76,62 +90,73 @@ public class HiveTableScanStrategy implements ScanStrategy {
                     List<Pattern> includePatterns = compilePatterns(includes);
                     List<Pattern> excludePatterns = compilePatterns(excludes);
 
-                    try {
-                        // 获取数据库中的所有表
-                        List<String> allTables = metaStoreClient.getAllTables(dbName);
+                    // 获取数据库中的所有表
+                    List<String> allTables = metaStoreClient.getAllTables(dbName);
 
-                        // 根据正则表达式过滤表名
-                        List<String> matchedTables = allTables.stream()
-                                .filter(tableName -> (includePatterns.isEmpty() || matchesAny(tableName, includePatterns))
-                                        && (excludePatterns.isEmpty() || !matchesAny(tableName, excludePatterns)))
-                                .toList();
+                    // 根据正则表达式过滤表名
+                    List<String> matchedTables = allTables.stream()
+                            .filter(tableName -> (includePatterns.isEmpty() || matchesAny(tableName, includePatterns))
+                                    && (excludePatterns.isEmpty() || !matchesAny(tableName, excludePatterns)))
+                            .collect(Collectors.toList());
 
-                        logger.info("数据库 {} 中匹配的表数量: {}", dbName, matchedTables.size());
+                    logger.info("数据库 {} 中匹配的表数量: {}", dbName, matchedTables.size());
 
-                        // 遍历匹配的表，获取存储位置
-                        for (String tableName : matchedTables) {
-                            logger.info("处理表: {}.{}", dbName, tableName);
+                    // 遍历匹配的表，获取存储位置
+                    for (String tableName : matchedTables) {
+                        logger.info("处理表: {}.{}", dbName, tableName);
 
-                            try {
-                                // 获取表详情
-                                Table table = metaStoreClient.getTable(dbName, tableName);
-                                String location = table.getSd().getLocation();
-                                String inputFormat = table.getSd().getInputFormat();
+                        try {
+                            // 获取表详情
+                            Table table = metaStoreClient.getTable(dbName, tableName);
+                            String location = table.getSd().getLocation();
+                            String inputFormat = table.getSd().getInputFormat();
 
-                                if (location != null && inputFormat != null) {
-                                    // 从InputFormat推断文件格式
-                                    String fileFormat = getFileFormatFromInputFormat(inputFormat);
-                                    if (fileFormat == null) {
-                                        logger.error("不支持的文件格式: {}, 表: {}.{}", inputFormat, dbName, tableName);
-                                        continue;
-                                    }
-
-                                    // 创建HDFS文件系统客户端
-                                    Configuration hadoopConf = new Configuration();
-                                    FileSystem fs = FileSystem.get(hadoopConf);
-
-                                    // 递归扫描表目录，找到所有根目录
-                                    scanTableLocation(fs, new Path(location), fileFormat, fileBlockSize, mergePaths, dbName, tableName);
+                            if (location != null && inputFormat != null) {
+                                // 从InputFormat推断文件格式
+                                String fileFormat = getFileFormatFromInputFormat(inputFormat);
+                                if (fileFormat == null) {
+                                    logger.error("不支持的文件格式: {}, 表: {}.{}", inputFormat, dbName, tableName);
+                                    continue;
                                 }
-                            } catch (Exception e) {
-                                logger.warn("处理表 {}.{} 时出错: {}", dbName, tableName, e.getMessage());
-                            }
-                        }
-                    } catch (Exception e) {
-                        logger.error("获取数据库 {} 的表列表失败: {}", dbName, e.getMessage());
-                    }
 
+                                // 创建HDFS文件系统客户端
+                                Configuration hadoopConf = new Configuration();
+                                FileSystem fs = FileSystem.get(hadoopConf);
+
+                                // 递归扫描表目录，找到所有根目录
+                                scanTableLocation(fs, new Path(location), fileFormat, fileBlockSize, mergePaths, dbName, tableName);
+                            }
+                        } catch (Exception e) {
+                            logger.warn("处理表 {}.{} 时出错: {}", dbName, tableName, e.getMessage());
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.error("获取数据库 {} 的信息失败: {}", dbName, e.getMessage());
+                }
             }
             
-            // 关闭Hive元数据客户端
-            metaStoreClient.close();
+            // 安全关闭Hive元数据客户端
+            try {
+                if (metaStoreClient != null) {
+                    metaStoreClient.close();
+                }
+            } catch (Exception e) {
+                logger.warn("关闭Hive元数据客户端时出错: {}", e.getMessage());
+            }
             
             logger.info("扫描完成，共找到 {} 个需要合并的路径", mergePaths.size());
         } catch (Exception e) {
             logger.error("扫描Hive表失败", e);
             throw e;
         } finally {
-            metaStoreClient.close();
+            // 确保在finally块中安全关闭客户端
+            if (metaStoreClient != null) {
+                try {
+                    metaStoreClient.close();
+                } catch (Exception e) {
+                    logger.warn("在finally块中关闭Hive元数据客户端时出错: {}", e.getMessage());
+                }
+            }
         }
         return mergePaths;
     }

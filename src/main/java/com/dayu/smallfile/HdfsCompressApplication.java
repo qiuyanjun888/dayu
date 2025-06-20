@@ -121,7 +121,9 @@ public class HdfsCompressApplication {
         }
         
         try {
-            HdfsCompressReportGenerator reportGenerator = new HdfsCompressReportGenerator(config.getReport(), results);
+            // 使用HdfsCompressConfig中的reportOutputDir创建报告生成器
+            HdfsCompressReportGenerator reportGenerator = new HdfsCompressReportGenerator(
+                    config.getHdfsCompress().getReportOutputDir(), results);
             return reportGenerator.generateReport();
         } catch (Exception e) {
             logger.error("生成报告失败", e);

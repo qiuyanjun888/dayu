@@ -21,14 +21,6 @@ public class CommandLineParser {
                 .desc("配置文件路径")
                 .build());
         
-        // 插件JAR选项
-        options.addOption(Option.builder("j")
-                .longOpt("jar")
-                .hasArg()
-                .argName("JAR")
-                .desc("插件JAR文件路径")
-                .build());
-
         // 帮助选项
         options.addOption(Option.builder("h")
                 .longOpt("help")

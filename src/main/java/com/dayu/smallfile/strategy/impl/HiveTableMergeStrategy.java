@@ -1,6 +1,7 @@
 package com.dayu.smallfile.strategy.impl;
 
 import com.dayu.smallfile.config.Config;
+import com.dayu.smallfile.config.SmallFileMergeConfig;
 import com.dayu.smallfile.executor.SparkMergeExecutor;
 import com.dayu.smallfile.model.HiveTblMergePath;
 import com.dayu.smallfile.model.HiveTblMergeResult;
@@ -25,6 +26,9 @@ import java.time.Instant;
  */
 public class HiveTableMergeStrategy implements MergeStrategy {
     private static final Logger logger = LoggerFactory.getLogger(HiveTableMergeStrategy.class);
+    
+    // 默认线程池关闭超时时间：2分钟
+    private static final long DEFAULT_THREAD_POOL_TIMEOUT = 2 * 60 * 1000;
 
     @Override
     public List<HiveTblMergeResult> merge(List<HiveTblMergePath> mergePaths, Config config) throws Exception {
@@ -34,6 +38,9 @@ public class HiveTableMergeStrategy implements MergeStrategy {
             logger.info("没有需要合并的路径");
             return results;
         }
+        
+        // 获取小文件合并配置
+        SmallFileMergeConfig mergeConfig = config.getSmallFileMerge();
         
         // 记录开始时间
         Instant startTime = Instant.now();
@@ -52,7 +59,7 @@ public class HiveTableMergeStrategy implements MergeStrategy {
             Configuration conf = new Configuration();
             fs = FileSystem.get(conf);
             // 创建线程池
-            int threadCount = config.getThreadPool().getQueueSize();
+            int threadCount = mergeConfig.getThreadPoolSize();
             ExecutorService executorService = Executors.newFixedThreadPool(threadCount);
             
             logger.info("使用 {} 个线程执行合并任务", threadCount);
@@ -79,8 +86,8 @@ public class HiveTableMergeStrategy implements MergeStrategy {
                     Duration duration = Duration.between(startTime, Instant.now());
                     String runTime = String.format("%02d:%02d:%02d", 
                             duration.toHours(), 
-                            duration.toMinutesPart(), 
-                            duration.toSecondsPart());
+                            duration.toMinutes(),
+                            duration.getSeconds());
                     
                     logger.info("任务进度 - 总任务数: {}, 已完成: {}, 成功: {}, 失败: {}, 剩余: {}, 运行时间: {}", 
                             totalTasks, completed, successTasks.get(), failedTasks.get(), remaining, runTime);
@@ -89,8 +96,7 @@ public class HiveTableMergeStrategy implements MergeStrategy {
             
             // 关闭线程池
             executorService.shutdown();
-            long timeout = DayuStringUtils.parseTime(config.getThreadPool().getTimeout());
-            if (!executorService.awaitTermination(timeout, TimeUnit.MILLISECONDS)) {
+            if (!executorService.awaitTermination(DEFAULT_THREAD_POOL_TIMEOUT, TimeUnit.MILLISECONDS)) {
                 logger.warn("线程池未能在指定时间内关闭");
                 executorService.shutdownNow();
             }
@@ -102,8 +108,8 @@ public class HiveTableMergeStrategy implements MergeStrategy {
             Duration totalDuration = Duration.between(startTime, Instant.now());
             String totalRunTime = String.format("%02d:%02d:%02d", 
                     totalDuration.toHours(), 
-                    totalDuration.toMinutesPart(), 
-                    totalDuration.toSecondsPart());
+                    totalDuration.toMinutes(),
+                    totalDuration.getSeconds());
             
             logger.info("任务完成统计 - 总任务数: {}, 已完成: {}, 成功: {}, 失败: {}, 剩余: 0, 总运行时间: {}", 
                     totalTasks, completedTasks.get(), successTasks.get(), failedTasks.get(), totalRunTime);

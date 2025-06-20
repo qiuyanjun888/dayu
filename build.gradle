@@ -4,11 +4,17 @@ plugins {
     id 'io.freefair.lombok' version '6.6.3'
     id 'idea'
 }
+repositories {
+    mavenCentral()
+    maven {url "https://repo.spring.io/plugins-release/"}
+    maven {url "https://maven.aliyun.com/repository/spring-plugin"}
+    mavenLocal()
+}
 
 group = 'com.dayu'
 version = '1.0.0'
-sourceCompatibility = JavaVersion.VERSION_17
-targetCompatibility = JavaVersion.VERSION_17
+sourceCompatibility = JavaVersion.VERSION_1_8
+targetCompatibility = JavaVersion.VERSION_1_8
 
 idea {
     module {
@@ -18,50 +24,81 @@ idea {
 }
 
 ext {
-    sparkVersion = '3.3.0'
-    hadoopVersion = '3.3.1'
-    hiveVersion = '3.1.2'
-    slf4jVersion = '1.7.36'
-    logbackVersion = '1.5.13'
+    hadoopVersion = '2.6.0'
+    hiveVersion = '1.2.1'
+    sparkVersion = '2.4.0'
+    slf4jVersion = '2.0.17'
+    logbackVersion = '1.3.15'
     jacksonVersion = '2.13.3'
     snakeyamlVersion = '1.33'
     commonsCliVersion = '1.5.0'
     poiVersion = '5.2.5'
     junitVersion = '4.13.2'
     derbyVersion = '10.14.2.0'
+    thriftVersion = '0.9.3'
 }
 
 repositories {
     mavenCentral()
 }
 
+configurations {
+    // 创建一个新的配置，用于IDEA运行时包含所有依赖
+    developmentOnly
+    // 让compileClasspath继承developmentOnly配置
+    compileClasspath.extendsFrom(developmentOnly)
+    // 让runtimeClasspath继承developmentOnly配置
+    runtimeClasspath.extendsFrom(developmentOnly)
+}
+
 dependencies {
-    // 日志依赖
+    // 日志依赖 - 这些会被打包
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
     implementation "ch.qos.logback:logback-classic:${logbackVersion}"
 
-    // Hadoop 依赖
+    // Hadoop 依赖 - 只在编译时需要，不打包
     compileOnly "org.apache.hadoop:hadoop-client:${hadoopVersion}"
     compileOnly "org.apache.hadoop:hadoop-common:${hadoopVersion}"
     compileOnly "org.apache.hadoop:hadoop-hdfs:${hadoopVersion}"
+    // 为IDEA运行添加Hadoop依赖
+    developmentOnly "org.apache.hadoop:hadoop-client:${hadoopVersion}"
+    developmentOnly "org.apache.hadoop:hadoop-common:${hadoopVersion}"
+    developmentOnly "org.apache.hadoop:hadoop-hdfs:${hadoopVersion}"
 
-    // Hive 依赖
+    // Hive 依赖 - 只在编译时需要，不打包
     compileOnly "org.apache.hive:hive-exec:${hiveVersion}"
     compileOnly "org.apache.hive:hive-metastore:${hiveVersion}"
+    // 为IDEA运行添加Hive依赖
+    developmentOnly "org.apache.hive:hive-exec:${hiveVersion}"
+    developmentOnly "org.apache.hive:hive-metastore:${hiveVersion}"
 
-    // Spark 依赖
-    compileOnly "org.apache.spark:spark-core_2.12:${sparkVersion}"
+    // 添加Thrift依赖
+    implementation "org.apache.thrift:libthrift:${thriftVersion}"
+    
+    // Spark 依赖 - 只在编译时需要，不打包
+    compileOnly ("org.apache.spark:spark-core_2.12:${sparkVersion}"){transitive = true }
     compileOnly "org.apache.spark:spark-sql_2.12:${sparkVersion}"
-    compileOnly "org.apache.spark:spark-hive_2.12:${sparkVersion}"
+    compileOnly ("org.apache.spark:spark-hive_2.12:${sparkVersion}")
     compileOnly "org.apache.spark:spark-launcher_2.12:${sparkVersion}"
+    // 为IDEA运行添加Spark依赖
+    developmentOnly ("org.apache.spark:spark-core_2.12:${sparkVersion}"){transitive = true }
+    developmentOnly "org.apache.spark:spark-sql_2.12:${sparkVersion}"
+    developmentOnly ("org.apache.spark:spark-hive_2.12:${sparkVersion}")
+    developmentOnly "org.apache.spark:spark-launcher_2.12:${sparkVersion}"
 
-    // YAML 解析
+    // Jackson 依赖 - 这些会被打包
+    implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.core:jackson-annotations:${jacksonVersion}"
+    implementation "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:${jacksonVersion}"
+    
+    // YAML 解析 - 这些会被打包
     implementation "org.yaml:snakeyaml:${snakeyamlVersion}"
 
-    // 命令行参数解析
+    // 命令行参数解析 - 这些会被打包
     implementation "commons-cli:commons-cli:${commonsCliVersion}"
 
-    // Excel 报表生成
+    // Excel 报表生成 - 这些会被打包
     implementation "org.apache.poi:poi:${poiVersion}"
     implementation "org.apache.poi:poi-ooxml:${poiVersion}"
     implementation "org.apache.poi:poi-ooxml-full:${poiVersion}"
@@ -82,9 +119,11 @@ dependencies {
 
     // Hive 测试依赖
     testImplementation ("org.apache.derby:derby:${derbyVersion}") {transitive = true }
+    testImplementation "org.apache.hive:hive-jdbc:${hiveVersion}"
 
     // Spark 测试依赖
     testImplementation ("org.apache.spark:spark-sql_2.12:${sparkVersion}"){transitive = true }
+    testImplementation ("org.apache.spark:spark-hive_2.12:${sparkVersion}"){transitive = true }
 }
 
 application {
@@ -99,7 +138,7 @@ jar {
     }
 }
 
-// 创建包含所有依赖的 fat jar
+// 创建包含所有依赖的 fat jar，但排除Hadoop/Spark/Hive依赖
 tasks.register('fatJar', Jar) {
     archiveClassifier = ''
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
@@ -107,7 +146,14 @@ tasks.register('fatJar', Jar) {
     from sourceSets.main.output
     dependsOn configurations.runtimeClasspath
     from {
-        configurations.runtimeClasspath.findAll { it.name.endsWith('jar') }.collect { zipTree(it) }
+        // 只包含implementation依赖，不包含compileOnly和developmentOnly依赖
+        configurations.runtimeClasspath.findAll { 
+            it.name.endsWith('jar') && 
+            !it.name.contains('hadoop') && 
+            !it.name.contains('spark') && 
+            !it.name.contains('hive') && 
+            !it.name.contains('hdfs')
+        }.collect { zipTree(it) }
     }
     
     manifest {
@@ -125,8 +171,9 @@ tasks.withType(JavaCompile) {
 // 解决测试依赖冲突
 configurations.all {
     resolutionStrategy {
-        force 'org.apache.logging.log4j:log4j-api:2.17.1'
-        force 'org.apache.logging.log4j:log4j-core:2.17.1'
+        force 'org.apache.logging.log4j:log4j-api:2.8.2'
+        force 'org.apache.logging.log4j:log4j-core:2.8.2'
+        force "org.apache.thrift:libthrift:${thriftVersion}"
     }
 }
 /*

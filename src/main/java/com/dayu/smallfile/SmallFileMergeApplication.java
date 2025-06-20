@@ -3,10 +3,11 @@ package com.dayu.smallfile;
 import com.dayu.smallfile.config.Config;
 import com.dayu.smallfile.model.HiveTblMergePath;
 import com.dayu.smallfile.model.HiveTblMergeResult;
-import com.dayu.smallfile.plugin.PluginManager;
 import com.dayu.smallfile.report.ReportGenerator;
 import com.dayu.smallfile.strategy.MergeStrategy;
 import com.dayu.smallfile.strategy.ScanStrategy;
+import com.dayu.smallfile.strategy.impl.HiveTableMergeStrategy;
+import com.dayu.smallfile.strategy.impl.HiveTableScanStrategy;
 import com.dayu.smallfile.utils.CommandLineParser;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.lang3.StringUtils;
@@ -23,12 +24,10 @@ public class SmallFileMergeApplication {
     private static final Logger logger = LoggerFactory.getLogger(SmallFileMergeApplication.class);
     
     private final Config config;
-    private final PluginManager pluginManager;
     private List<HiveTblMergeResult> results;
     
     public SmallFileMergeApplication() {
         this.config = new Config();
-        this.pluginManager = new PluginManager();
     }
     
     /**
@@ -37,6 +36,7 @@ public class SmallFileMergeApplication {
      * @param args 命令行参数
      */
     public static void main(String[] args) {
+        logger.info("small file merge app start");
         SmallFileMergeApplication app = new SmallFileMergeApplication();
         try {
             app.run(args);
@@ -44,6 +44,7 @@ public class SmallFileMergeApplication {
             logger.error("应用运行失败", e);
             System.exit(1);
         }
+        logger.info("small file merge app run successfully");
     }
     
     /**
@@ -79,20 +80,7 @@ public class SmallFileMergeApplication {
         logger.info("使用配置文件: {}", configPath);
         config.load(configPath);
         
-        // 加载插件JAR
-        String pluginJar = cmd.getOptionValue("jar", "");
-        if (pluginJar != null && !pluginJar.isEmpty()) {
-            logger.info("加载插件JAR: {}", pluginJar);
-            pluginManager.loadPluginJar(pluginJar);
-        }
-        
-        // 注册策略类
-        pluginManager.registerStrategy(config.getScan().getStrategyClass(), "scan");
-        pluginManager.registerStrategy(config.getMerge().getStrategyClass(), "merge");
-
-
         executeJob();
-
     }
     
     /**
@@ -102,15 +90,21 @@ public class SmallFileMergeApplication {
      */
     private void executeJob() throws Exception {
         try {
+            // 创建扫描策略
+            ScanStrategy scanStrategy = new HiveTableScanStrategy();
+            logger.info("使用扫描策略: HiveTableScanStrategy");
+            
             // 执行扫描
             logger.info("开始扫描小文件路径");
-            ScanStrategy scanStrategy = pluginManager.getScanStrategy();
             List<HiveTblMergePath> mergePaths = scanStrategy.scan(config);
             logger.info("扫描完成，找到 {} 个需要合并的路径", mergePaths.size());
             
+            // 创建合并策略
+            MergeStrategy mergeStrategy = new HiveTableMergeStrategy();
+            logger.info("使用合并策略: HiveTableMergeStrategy");
+            
             // 执行合并
             logger.info("开始执行合并");
-            MergeStrategy mergeStrategy = pluginManager.getMergeStrategy();
             results = mergeStrategy.merge(mergePaths, config);
             logger.info("合并完成，结果数: {}", results.size());
             
@@ -135,7 +129,7 @@ public class SmallFileMergeApplication {
         }
         
         try {
-            ReportGenerator reportGenerator = new ReportGenerator(config.getReport(), results);
+            ReportGenerator reportGenerator = new ReportGenerator(config.getSmallFileMerge(), results);
             return reportGenerator.generateReport();
         } catch (Exception e) {
             logger.error("生成报告失败", e);

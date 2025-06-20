@@ -34,7 +34,7 @@
     <logger name="com.dayu.smallfile" level="INFO" />
 
     <!-- 第三方库日志 -->
-    <logger name="org.apache.spark" level="WARN" />
-    <logger name="org.apache.hadoop" level="WARN" />
-    <logger name="org.apache.hive" level="WARN" />
+    <logger name="org.apache.spark" level="INFO" />
+    <logger name="org.apache.hadoop" level="INFO" />
+    <logger name="org.apache.hive" level="INFO" />
 </configuration> 

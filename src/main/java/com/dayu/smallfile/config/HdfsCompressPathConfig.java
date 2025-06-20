@@ -1,5 +1,6 @@
 package com.dayu.smallfile.config;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 /**
@@ -7,6 +8,7 @@ import lombok.Data;
  */
 @Data
 public class HdfsCompressPathConfig {
+    @JsonProperty("root-path")
     private String rootPath;        // HDFS根路径
     private boolean recursive;      // 是否递归
     private String threshold;       // 文件大小阈值

@@ -1,6 +1,5 @@
 package com.dayu.smallfile.report;
 
-import com.dayu.smallfile.config.ReportConfig;
 import com.dayu.smallfile.model.HdfsCompressResult;
 import com.dayu.smallfile.model.HdfsCompressTask;
 import org.apache.poi.ss.usermodel.*;
@@ -23,17 +22,17 @@ import java.util.List;
 public class HdfsCompressReportGenerator {
     private static final Logger logger = LoggerFactory.getLogger(HdfsCompressReportGenerator.class);
     
-    private final ReportConfig config;
+    private final String outputDir;
     private final List<HdfsCompressResult> results;
     
     /**
      * 构造函数
      * 
-     * @param config 报告配置
+     * @param outputDir 报告输出目录
      * @param results 压缩结果列表
      */
-    public HdfsCompressReportGenerator(ReportConfig config, List<HdfsCompressResult> results) {
-        this.config = config;
+    public HdfsCompressReportGenerator(String outputDir, List<HdfsCompressResult> results) {
+        this.outputDir = outputDir;
         this.results = results;
     }
     
@@ -44,8 +43,6 @@ public class HdfsCompressReportGenerator {
      * @throws IOException 如果生成报告失败
      */
     public File generateReport() throws IOException {
-        String outputDir = config.getOutputDir();
-        
         // 创建输出目录
         File dir = new File(outputDir);
         if (!dir.exists() && !dir.mkdirs()) {
