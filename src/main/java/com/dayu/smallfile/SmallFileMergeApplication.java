@@ -9,6 +9,7 @@ import com.dayu.smallfile.strategy.ScanStrategy;
 import com.dayu.smallfile.strategy.impl.HiveTableMergeStrategy;
 import com.dayu.smallfile.strategy.impl.HiveTableScanStrategy;
 import com.dayu.smallfile.utils.CommandLineParser;
+import com.dayu.smallfile.utils.ProgressBarUtil;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -99,6 +100,12 @@ public class SmallFileMergeApplication {
             List<HiveTblMergePath> mergePaths = scanStrategy.scan(config);
             logger.info("扫描完成，找到 {} 个需要合并的路径", mergePaths.size());
             
+            // 如果没有找到需要合并的路径，则直接返回
+            if (mergePaths.isEmpty()) {
+                logger.info("没有找到需要合并的路径，程序结束");
+                return;
+            }
+            
             // 创建合并策略
             MergeStrategy mergeStrategy = new HiveTableMergeStrategy();
             logger.info("使用合并策略: HiveTableMergeStrategy");
@@ -129,8 +136,11 @@ public class SmallFileMergeApplication {
         }
         
         try {
+            logger.info("开始生成报告...");
             ReportGenerator reportGenerator = new ReportGenerator(config.getSmallFileMerge(), results);
-            return reportGenerator.generateReport();
+            File reportFile = reportGenerator.generateReport();
+            logger.info("报告生成完成");
+            return reportFile;
         } catch (Exception e) {
             logger.error("生成报告失败", e);
             return null;

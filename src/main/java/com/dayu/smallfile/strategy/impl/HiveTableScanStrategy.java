@@ -7,6 +7,7 @@ import com.dayu.smallfile.model.HiveTblMergePath;
 import com.dayu.smallfile.strategy.ScanStrategy;
 import com.dayu.smallfile.utils.DayuStringUtils;
 import com.dayu.smallfile.utils.HdfsUtils;
+import com.dayu.smallfile.utils.ProgressBarUtil;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
@@ -32,6 +33,7 @@ import java.util.stream.Collectors;
  */
 public class HiveTableScanStrategy implements ScanStrategy {
     private static final Logger logger = LoggerFactory.getLogger(HiveTableScanStrategy.class);
+    private ProgressBarUtil progressBar;
 
     @Override
     public List<HiveTblMergePath> scan(Config config) throws Exception {
@@ -57,6 +59,26 @@ public class HiveTableScanStrategy implements ScanStrategy {
                 fileBlockSize = HdfsUtils.getHdfsDefaultBlockSize();
             }
 
+            // 初始化进度条，先统计总表数量
+            int totalTables = 0;
+            for (HiveDatabase db : databases) {
+                String dbName = db.getDbName();
+                try {
+                    List<String> allDatabases = metaStoreClient.getAllDatabases();
+                    if (!allDatabases.contains(dbName)) {
+                        continue;
+                    }
+                    
+                    List<String> allTables = metaStoreClient.getAllTables(dbName);
+                    totalTables += allTables.size();
+                } catch (Exception e) {
+                    logger.error("获取数据库 {} 的表数量失败: {}", dbName, e.getMessage());
+                }
+            }
+            
+            // 创建进度条
+            progressBar = new ProgressBarUtil(totalTables, "扫描Hive表");
+            int processedTables = 0;
             
             // 遍历配置的数据库
             for (HiveDatabase db : databases) {
@@ -103,8 +125,6 @@ public class HiveTableScanStrategy implements ScanStrategy {
 
                     // 遍历匹配的表，获取存储位置
                     for (String tableName : matchedTables) {
-                        logger.info("处理表: {}.{}", dbName, tableName);
-
                         try {
                             // 获取表详情
                             Table table = metaStoreClient.getTable(dbName, tableName);
@@ -116,6 +136,8 @@ public class HiveTableScanStrategy implements ScanStrategy {
                                 String fileFormat = getFileFormatFromInputFormat(inputFormat);
                                 if (fileFormat == null) {
                                     logger.error("不支持的文件格式: {}, 表: {}.{}", inputFormat, dbName, tableName);
+                                    progressBar.update(false);
+                                    processedTables++;
                                     continue;
                                 }
 
@@ -125,10 +147,26 @@ public class HiveTableScanStrategy implements ScanStrategy {
 
                                 // 递归扫描表目录，找到所有根目录
                                 scanTableLocation(fs, new Path(location), fileFormat, fileBlockSize, mergePaths, dbName, tableName);
+                                
+                                // 更新进度条
+                                progressBar.update(true);
+                                processedTables++;
+                            } else {
+                                progressBar.update(false);
+                                processedTables++;
                             }
                         } catch (Exception e) {
                             logger.warn("处理表 {}.{} 时出错: {}", dbName, tableName, e.getMessage());
+                            progressBar.update(false);
+                            processedTables++;
                         }
+                    }
+                    
+                    // 更新未匹配表的进度
+                    int unmatchedTables = allTables.size() - matchedTables.size();
+                    for (int i = 0; i < unmatchedTables; i++) {
+                        progressBar.update(false);
+                        processedTables++;
                     }
                 } catch (Exception e) {
                     logger.error("获取数据库 {} 的信息失败: {}", dbName, e.getMessage());
@@ -144,6 +182,8 @@ public class HiveTableScanStrategy implements ScanStrategy {
                 logger.warn("关闭Hive元数据客户端时出错: {}", e.getMessage());
             }
             
+            // 完成进度条
+            progressBar.complete();
             logger.info("扫描完成，共找到 {} 个需要合并的路径", mergePaths.size());
         } catch (Exception e) {
             logger.error("扫描Hive表失败", e);
@@ -191,6 +231,13 @@ public class HiveTableScanStrategy implements ScanStrategy {
             return;
         }
         
+        // 获取路径名称，如果以.开头，则跳过处理
+        String pathName = path.getName();
+        if (pathName.startsWith(".")) {
+            logger.info("跳过以.开头的目录: {}", path);
+            return;
+        }
+        
         // 获取目录下的所有文件和子目录
         FileStatus[] statuses = fs.listStatus(path);
         
@@ -200,9 +247,14 @@ public class HiveTableScanStrategy implements ScanStrategy {
         
         for (FileStatus status : statuses) {
             if (status.isDirectory()) {
-                hasSubDir = true;
-                // 递归扫描子目录
-                scanTableLocation(fs, status.getPath(), fileFormat, fileBlockSize, mergePaths, dbName, tableName);
+                // 忽略以.开头的目录
+                if (!status.getPath().getName().startsWith(".")) {
+                    hasSubDir = true;
+                    // 递归扫描子目录
+                    scanTableLocation(fs, status.getPath(), fileFormat, fileBlockSize, mergePaths, dbName, tableName);
+                } else {
+                    logger.debug("跳过以.开头的子目录: {}", status.getPath());
+                }
             } else if (!status.getPath().getName().startsWith("_")) {
                 hasFiles = true;
             }
@@ -243,8 +295,8 @@ public class HiveTableScanStrategy implements ScanStrategy {
         // 计算平均文件大小
         long avgFileSize = fileCount > 0 ? totalSize / fileCount : 0;
         
-        // 如果平均文件大小小于目标文件大小，则添加到合并路径
-        if (fileCount > 0 && avgFileSize < fileBlockSize) {
+        // 只有当文件数量大于等于2且平均文件大小小于目标文件大小时，才添加到合并路径
+        if (fileCount >= 2 && avgFileSize < fileBlockSize) {
             HiveTblMergePath mergePath = new HiveTblMergePath(dbName, tableName, path.toString(), fileFormat);
             mergePath.setFileCount(fileCount);
 

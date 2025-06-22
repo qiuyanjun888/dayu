@@ -7,6 +7,8 @@ import com.dayu.smallfile.model.HiveTblMergePath;
 import com.dayu.smallfile.model.HiveTblMergeResult;
 import com.dayu.smallfile.strategy.MergeStrategy;
 import com.dayu.smallfile.utils.DayuStringUtils;
+import com.dayu.smallfile.utils.ProgressBarUtil;
+import org.apache.commons.lang3.SystemUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.spark.sql.SparkSession;
@@ -51,11 +53,26 @@ public class HiveTableMergeStrategy implements MergeStrategy {
         AtomicInteger successTasks = new AtomicInteger(0);
         AtomicInteger failedTasks = new AtomicInteger(0);
         
+        // 创建进度条
+        ProgressBarUtil progressBar = new ProgressBarUtil(totalTasks, "合并小文件");
+        
         SparkSession spark = null;
         FileSystem fs = null;
         try {
-            // 创建Spark会话
-            spark = SparkSession.builder().enableHiveSupport().getOrCreate();
+            // 创建Spark会话，配置使用logback日志框架
+            SparkSession.Builder sparkBuilder = SparkSession.builder()
+                .config("spark.driver.extraJavaOptions", "-Dlog4j.configuration=file:log4j-disabled.properties")
+                .config("spark.executor.extraJavaOptions", "-Dlog4j.configuration=file:log4j-disabled.properties");
+            
+            if (SystemUtils.IS_OS_WINDOWS) {
+                spark = sparkBuilder.master("local[*]").enableHiveSupport().config("spark.ui.port","11111").getOrCreate();
+            } else {
+                spark = sparkBuilder.enableHiveSupport().getOrCreate();
+            }
+            
+            // 设置Spark日志级别
+            spark.sparkContext().setLogLevel("WARN");
+            
             Configuration conf = new Configuration();
             fs = FileSystem.get(conf);
             // 创建线程池
@@ -77,22 +94,18 @@ public class HiveTableMergeStrategy implements MergeStrategy {
                     HiveTblMergeResult result = future.get();
                     results.add(result);
                     successTasks.incrementAndGet();
+                    progressBar.update(true);
                 } catch (InterruptedException | ExecutionException e) {
                     logger.error("合并任务执行失败", e);
                     failedTasks.incrementAndGet();
+                    progressBar.update(false);
                 } finally {
-                    int completed = completedTasks.incrementAndGet();
-                    int remaining = totalTasks - completed;
-                    Duration duration = Duration.between(startTime, Instant.now());
-                    String runTime = String.format("%02d:%02d:%02d", 
-                            duration.toHours(), 
-                            duration.toMinutes(),
-                            duration.getSeconds());
-                    
-                    logger.info("任务进度 - 总任务数: {}, 已完成: {}, 成功: {}, 失败: {}, 剩余: {}, 运行时间: {}", 
-                            totalTasks, completed, successTasks.get(), failedTasks.get(), remaining, runTime);
+                    completedTasks.incrementAndGet();
                 }
             }
+            
+            // 完成进度条
+            progressBar.complete();
             
             // 关闭线程池
             executorService.shutdown();
@@ -108,10 +121,10 @@ public class HiveTableMergeStrategy implements MergeStrategy {
             Duration totalDuration = Duration.between(startTime, Instant.now());
             String totalRunTime = String.format("%02d:%02d:%02d", 
                     totalDuration.toHours(), 
-                    totalDuration.toMinutes(),
-                    totalDuration.getSeconds());
+                    (totalDuration.toMinutes() % 60), 
+                    (totalDuration.getSeconds() % 60));
             
-            logger.info("任务完成统计 - 总任务数: {}, 已完成: {}, 成功: {}, 失败: {}, 剩余: 0, 总运行时间: {}", 
+            logger.info("任务完成统计 - 总任务数: {}, 已完成: {}, 成功: {}, 失败: {}, 总运行时间: {}", 
                     totalTasks, completedTasks.get(), successTasks.get(), failedTasks.get(), totalRunTime);
             
             // 关闭Spark会话
