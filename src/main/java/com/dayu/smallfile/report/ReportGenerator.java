@@ -13,6 +13,7 @@ import org.apache.poi.xssf.usermodel.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.awt.Color;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -29,10 +30,6 @@ public class ReportGenerator {
     
     private final SmallFileMergeConfig config;
     private final List<HiveTblMergeResult> results;
-    
-    // 在类级别存储数据库统计的行范围
-    private int dbStatsStartRow;
-    private int dbStatsEndRow;
     
     public ReportGenerator(SmallFileMergeConfig config, List<HiveTblMergeResult> results) {
         this.config = config;
@@ -63,9 +60,6 @@ public class ReportGenerator {
         try (XSSFWorkbook workbook = new XSSFWorkbook()) {
             // 创建数据表格
             XSSFSheet dataSheet = createDataSheet(workbook);
-            
-            // 在第一个sheet中添加数据库维度统计数据
-            addDatabaseStatsData(workbook, dataSheet);
             
             // 创建图表sheet
             createChartSheet(workbook, dataSheet);
@@ -141,39 +135,46 @@ public class ReportGenerator {
     }
     
     /**
-     * 在第一个Sheet添加数据库维度的统计数据
+     * 创建图表表格
      *
      * @param workbook 工作簿
-     * @param sheet 数据Sheet
+     * @param dataSheet 数据表格，用于引用数据
      */
-    private void addDatabaseStatsData(XSSFWorkbook workbook, XSSFSheet sheet) {
-        // 获取最后一行的行号
-        int lastRowNum = sheet.getLastRowNum();
-        dbStatsStartRow = lastRowNum + 3; // 留出2行空白
+    private void createChartSheet(XSSFWorkbook workbook, XSSFSheet dataSheet) {
+        XSSFSheet chartSheet = workbook.createSheet("数据库统计图表");
         
-        // 创建表头样式
-        CellStyle headerStyle = workbook.createCellStyle();
-        Font headerFont = workbook.createFont();
-        headerFont.setBold(true);
-        headerStyle.setFont(headerFont);
+        // 获取按数据库分组的统计数据
+        Map<String, DatabaseStats> dbStatsMap = calculateDatabaseStats();
         
-        // 创建数据库统计表头
-        Row headerRow = sheet.createRow(dbStatsStartRow);
-        String[] dbStatsHeaders = {"数据库名", "表数量", "合并前文件数", "合并后文件数", 
-                                  "合并前平均大小(MB)", "合并后平均大小(MB)", 
-                                  "成功表数", "失败表数", "总耗时(秒)"};
-        
-        for (int i = 0; i < dbStatsHeaders.length; i++) {
-            Cell cell = headerRow.createCell(i);
-            cell.setCellValue(dbStatsHeaders[i]);
-            cell.setCellStyle(headerStyle);
+        if (dbStatsMap.isEmpty()) {
+            logger.warn("没有数据库统计数据，无法创建图表");
+            return;
         }
         
+        // 创建隐藏的数据表用于图表
+        XSSFSheet hiddenSheet = workbook.createSheet("ChartData");
+        workbook.setSheetHidden(workbook.getSheetIndex(hiddenSheet), true);
+        
+        // 在隐藏表中填充数据库统计数据
+        populateHiddenSheetData(hiddenSheet, dbStatsMap);
+        
+        // 创建文件数量对比图表
+        createFileCountChart(workbook, hiddenSheet, chartSheet);
+        
+        // 创建平均文件大小对比图表
+        createFileSizeChart(workbook, hiddenSheet, chartSheet);
+    }
+    
+    /**
+     * 计算数据库统计信息
+     */
+    private Map<String, DatabaseStats> calculateDatabaseStats() {
         // 按数据库分组统计
         Map<String, List<HiveTblMergeResult>> dbResults = results.stream()
                 .collect(Collectors.groupingBy(HiveTblMergeResult::getDbName));
         
-        int rowNum = dbStatsStartRow + 1;
+        Map<String, DatabaseStats> dbStatsMap = new HashMap<>();
+        
         for (Map.Entry<String, List<HiveTblMergeResult>> entry : dbResults.entrySet()) {
             String dbName = entry.getKey();
             List<HiveTblMergeResult> dbTables = entry.getValue();
@@ -205,60 +206,51 @@ public class ReportGenerator {
                     .mapToDouble(r -> r.getDuration() / 1000.0)
                     .sum();
             
-            // 创建行
-            Row row = sheet.createRow(rowNum++);
-            row.createCell(0).setCellValue(dbName);
-            row.createCell(1).setCellValue(tableCount);
-            row.createCell(2).setCellValue(beforeFileCount);
-            row.createCell(3).setCellValue(afterFileCount);
-            row.createCell(4).setCellValue(beforeAvgSize);
-            row.createCell(5).setCellValue(afterAvgSize);
-            row.createCell(6).setCellValue(successCount);
-            row.createCell(7).setCellValue(failCount);
-            row.createCell(8).setCellValue(totalDuration);
+            DatabaseStats stats = new DatabaseStats(
+                dbName, tableCount, beforeFileCount, afterFileCount,
+                beforeAvgSize, afterAvgSize, successCount, failCount, totalDuration
+            );
+            
+            dbStatsMap.put(dbName, stats);
         }
         
-        // 保存数据库统计结束行
-        dbStatsEndRow = rowNum - 1;
-        
-        // 输出日志确认行范围
-        logger.info("数据库统计数据行范围: {} - {}", dbStatsStartRow+1, dbStatsEndRow);
+        return dbStatsMap;
     }
     
     /**
-     * 创建图表表格
-     *
-     * @param workbook 工作簿
-     * @param dataSheet 数据表格，用于引用数据
+     * 在隐藏表中填充数据库统计数据
      */
-    private void createChartSheet(XSSFWorkbook workbook, XSSFSheet dataSheet) {
-        XSSFSheet chartSheet = workbook.createSheet("数据库统计图表");
+    private void populateHiddenSheetData(XSSFSheet hiddenSheet, Map<String, DatabaseStats> dbStatsMap) {
+        // 创建表头
+        Row headerRow = hiddenSheet.createRow(0);
+        String[] headers = {"数据库名", "表数量", "合并前文件数", "合并后文件数", 
+                           "合并前平均大小(MB)", "合并后平均大小(MB)", 
+                           "成功表数", "失败表数", "总耗时(秒)"};
         
-        // 计算行数
-        int rowCount = dbStatsEndRow - (dbStatsStartRow + 1) + 1;
-        
-        if (rowCount <= 0) {
-            logger.warn("没有数据库统计数据，无法创建图表");
-            return;
+        for (int i = 0; i < headers.length; i++) {
+            headerRow.createCell(i).setCellValue(headers[i]);
         }
         
-        // 创建文件数量对比图表
-        createFileCountChart(workbook, dataSheet, chartSheet, dbStatsStartRow + 1, dbStatsEndRow);
-        
-        // 创建平均文件大小对比图表
-        createFileSizeChart(workbook, dataSheet, chartSheet, dbStatsStartRow + 1, dbStatsEndRow);
+        // 填充数据
+        int rowNum = 1;
+        for (DatabaseStats stats : dbStatsMap.values()) {
+            Row row = hiddenSheet.createRow(rowNum++);
+            row.createCell(0).setCellValue(stats.getDbName());
+            row.createCell(1).setCellValue(stats.getTableCount());
+            row.createCell(2).setCellValue(stats.getBeforeFileCount());
+            row.createCell(3).setCellValue(stats.getAfterFileCount());
+            row.createCell(4).setCellValue(stats.getBeforeAvgSize());
+            row.createCell(5).setCellValue(stats.getAfterAvgSize());
+            row.createCell(6).setCellValue(stats.getSuccessCount());
+            row.createCell(7).setCellValue(stats.getFailCount());
+            row.createCell(8).setCellValue(stats.getTotalDuration());
+        }
     }
     
     /**
      * 创建文件数量对比图表
-     * 
-     * @param workbook 工作簿
-     * @param dataSheet 数据表格
-     * @param chartSheet 图表表格
-     * @param startRow 数据起始行
-     * @param endRow 数据结束行
      */
-    private void createFileCountChart(XSSFWorkbook workbook, XSSFSheet dataSheet, XSSFSheet chartSheet, int startRow, int endRow) {
+    private void createFileCountChart(XSSFWorkbook workbook, XSSFSheet dataSheet, XSSFSheet chartSheet) {
         XSSFDrawing drawing = chartSheet.createDrawingPatriarch();
         XSSFClientAnchor anchor = drawing.createAnchor(0, 0, 0, 0, 0, 1, 8, 15);
         
@@ -280,52 +272,56 @@ public class ReportGenerator {
         
         try {
             // 获取数据范围
-            String categoryRange = "'" + dataSheet.getSheetName() + "'!$A$" + startRow + ":$A$" + endRow;
-            XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(workbook.getSheet(dataSheet.getSheetName()), 
+            int lastRow = dataSheet.getLastRowNum();
+            if (lastRow < 1) {
+                logger.warn("没有足够的数据创建图表");
+                return;
+            }
+            
+            String categoryRange = dataSheet.getSheetName() + "!$A$2:$A$" + (lastRow + 1);
+            XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(
+                    workbook.getSheet(dataSheet.getSheetName()), 
                     CellRangeAddress.valueOf(categoryRange));
             
             // 创建图表数据
             XDDFChartData data = chart.createData(ChartTypes.BAR, categoryAxis, valueAxis);
-            data.setVaryColors(false);
             
             // 合并前文件数
-            String beforeRange = "'" + dataSheet.getSheetName() + "'!$C$" + startRow + ":$C$" + endRow;
+            String beforeRange = dataSheet.getSheetName() + "!$C$2:$C$" + (lastRow + 1);
             XDDFNumericalDataSource<Double> beforeValues = XDDFDataSourcesFactory.fromNumericCellRange(
-                    workbook.getSheet(dataSheet.getSheetName()), CellRangeAddress.valueOf(beforeRange));
+                    workbook.getSheet(dataSheet.getSheetName()), 
+                    CellRangeAddress.valueOf(beforeRange));
             XDDFChartData.Series beforeSeries = data.addSeries(categories, beforeValues);
             beforeSeries.setTitle("合并前文件数", null);
             
             // 合并后文件数
-            String afterRange = "'" + dataSheet.getSheetName() + "'!$D$" + startRow + ":$D$" + endRow;
+            String afterRange = dataSheet.getSheetName() + "!$D$2:$D$" + (lastRow + 1);
             XDDFNumericalDataSource<Double> afterValues = XDDFDataSourcesFactory.fromNumericCellRange(
-                    workbook.getSheet(dataSheet.getSheetName()), CellRangeAddress.valueOf(afterRange));
+                    workbook.getSheet(dataSheet.getSheetName()), 
+                    CellRangeAddress.valueOf(afterRange));
             XDDFChartData.Series afterSeries = data.addSeries(categories, afterValues);
             afterSeries.setTitle("合并后文件数", null);
             
             // 设置为柱状图
             XDDFBarChartData barChartData = (XDDFBarChartData) data;
             barChartData.setBarDirection(BarDirection.COL);
-            barChartData.setBarGrouping(BarGrouping.CLUSTERED); // 确保柱子并排显示
-            barChartData.setOverlap((byte)0); // 设置柱子之间不重叠
-            barChartData.setGapWidth(150); // 设置组间距
+            barChartData.setBarGrouping(BarGrouping.CLUSTERED);
+            barChartData.setVaryColors(true);
+            barChartData.setOverlap((byte)0);
+            barChartData.setGapWidth(100);
             
             // 绘制图表
             chart.plot(data);
+            
         } catch (Exception e) {
-            logger.error("创建文件数量对比图表失败: {}", e.getMessage());
+            logger.error("创建文件数量对比图表失败: {}", e.getMessage(), e);
         }
     }
     
     /**
      * 创建平均文件大小对比图表
-     * 
-     * @param workbook 工作簿
-     * @param dataSheet 数据表格
-     * @param chartSheet 图表表格
-     * @param startRow 数据起始行
-     * @param endRow 数据结束行
      */
-    private void createFileSizeChart(XSSFWorkbook workbook, XSSFSheet dataSheet, XSSFSheet chartSheet, int startRow, int endRow) {
+    private void createFileSizeChart(XSSFWorkbook workbook, XSSFSheet dataSheet, XSSFSheet chartSheet) {
         XSSFDrawing drawing = chartSheet.createDrawingPatriarch();
         XSSFClientAnchor anchor = drawing.createAnchor(0, 0, 0, 0, 0, 16, 8, 30);
         
@@ -347,39 +343,49 @@ public class ReportGenerator {
         
         try {
             // 获取数据范围
-            String categoryRange = "'" + dataSheet.getSheetName() + "'!$A$" + startRow + ":$A$" + endRow;
-            XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(workbook.getSheet(dataSheet.getSheetName()), 
+            int lastRow = dataSheet.getLastRowNum();
+            if (lastRow < 1) {
+                logger.warn("没有足够的数据创建图表");
+                return;
+            }
+            
+            String categoryRange = dataSheet.getSheetName() + "!$A$2:$A$" + (lastRow + 1);
+            XDDFDataSource<String> categories = XDDFDataSourcesFactory.fromStringCellRange(
+                    workbook.getSheet(dataSheet.getSheetName()), 
                     CellRangeAddress.valueOf(categoryRange));
             
             // 创建图表数据
             XDDFChartData data = chart.createData(ChartTypes.BAR, categoryAxis, valueAxis);
-            data.setVaryColors(false);
             
             // 合并前平均大小
-            String beforeRange = "'" + dataSheet.getSheetName() + "'!$E$" + startRow + ":$E$" + endRow;
+            String beforeRange = dataSheet.getSheetName() + "!$E$2:$E$" + (lastRow + 1);
             XDDFNumericalDataSource<Double> beforeValues = XDDFDataSourcesFactory.fromNumericCellRange(
-                    workbook.getSheet(dataSheet.getSheetName()), CellRangeAddress.valueOf(beforeRange));
+                    workbook.getSheet(dataSheet.getSheetName()), 
+                    CellRangeAddress.valueOf(beforeRange));
             XDDFChartData.Series beforeSeries = data.addSeries(categories, beforeValues);
             beforeSeries.setTitle("合并前平均大小(MB)", null);
             
             // 合并后平均大小
-            String afterRange = "'" + dataSheet.getSheetName() + "'!$F$" + startRow + ":$F$" + endRow;
+            String afterRange = dataSheet.getSheetName() + "!$F$2:$F$" + (lastRow + 1);
             XDDFNumericalDataSource<Double> afterValues = XDDFDataSourcesFactory.fromNumericCellRange(
-                    workbook.getSheet(dataSheet.getSheetName()), CellRangeAddress.valueOf(afterRange));
+                    workbook.getSheet(dataSheet.getSheetName()), 
+                    CellRangeAddress.valueOf(afterRange));
             XDDFChartData.Series afterSeries = data.addSeries(categories, afterValues);
             afterSeries.setTitle("合并后平均大小(MB)", null);
             
             // 设置为柱状图
             XDDFBarChartData barChartData = (XDDFBarChartData) data;
             barChartData.setBarDirection(BarDirection.COL);
-            barChartData.setBarGrouping(BarGrouping.CLUSTERED); // 确保柱子并排显示
-            barChartData.setOverlap((byte)0); // 设置柱子之间不重叠
-            barChartData.setGapWidth(150); // 设置组间距
+            barChartData.setBarGrouping(BarGrouping.CLUSTERED);
+            barChartData.setVaryColors(true);
+            barChartData.setOverlap((byte)0);
+            barChartData.setGapWidth(100);
             
             // 绘制图表
             chart.plot(data);
+            
         } catch (Exception e) {
-            logger.error("创建平均文件大小对比图表失败: {}", e.getMessage());
+            logger.error("创建平均文件大小对比图表失败: {}", e.getMessage(), e);
         }
     }
     
@@ -391,5 +397,70 @@ public class ReportGenerator {
      */
     private double formatSize(long bytes) {
         return bytes / (1024.0 * 1024.0);
+    }
+    
+    /**
+     * 数据库统计数据类
+     */
+    private static class DatabaseStats {
+        private final String dbName;
+        private final int tableCount;
+        private final long beforeFileCount;
+        private final long afterFileCount;
+        private final double beforeAvgSize;
+        private final double afterAvgSize;
+        private final long successCount;
+        private final long failCount;
+        private final double totalDuration;
+        
+        public DatabaseStats(String dbName, int tableCount, long beforeFileCount, long afterFileCount,
+                            double beforeAvgSize, double afterAvgSize, long successCount, long failCount,
+                            double totalDuration) {
+            this.dbName = dbName;
+            this.tableCount = tableCount;
+            this.beforeFileCount = beforeFileCount;
+            this.afterFileCount = afterFileCount;
+            this.beforeAvgSize = beforeAvgSize;
+            this.afterAvgSize = afterAvgSize;
+            this.successCount = successCount;
+            this.failCount = failCount;
+            this.totalDuration = totalDuration;
+        }
+        
+        public String getDbName() {
+            return dbName;
+        }
+        
+        public int getTableCount() {
+            return tableCount;
+        }
+        
+        public long getBeforeFileCount() {
+            return beforeFileCount;
+        }
+        
+        public long getAfterFileCount() {
+            return afterFileCount;
+        }
+        
+        public double getBeforeAvgSize() {
+            return beforeAvgSize;
+        }
+        
+        public double getAfterAvgSize() {
+            return afterAvgSize;
+        }
+        
+        public long getSuccessCount() {
+            return successCount;
+        }
+        
+        public long getFailCount() {
+            return failCount;
+        }
+        
+        public double getTotalDuration() {
+            return totalDuration;
+        }
     }
 } 

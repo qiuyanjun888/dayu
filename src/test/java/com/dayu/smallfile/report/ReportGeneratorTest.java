@@ -1,6 +1,6 @@
 package com.dayu.smallfile.report;
 
-import com.dayu.smallfile.config.ReportConfig;
+import com.dayu.smallfile.config.SmallFileMergeConfig;
 import com.dayu.smallfile.model.HiveTblMergeResult;
 import org.junit.After;
 import org.junit.Assert;
@@ -17,17 +17,16 @@ import java.util.List;
 
 public class ReportGeneratorTest {
 
-    private ReportConfig reportConfig;
+    private SmallFileMergeConfig mergeConfig;
     private List<HiveTblMergeResult> results;
-    private final String outputDir = "D:\\";
+    private final String outputDir = "D:\\var\\log\\merge-tool";
 
     @Before
     public void setUp() {
-        // 初始化ReportConfig
-        reportConfig = new ReportConfig();
-        reportConfig.setOutputDir(outputDir);
-        reportConfig.setFormat("xlsx");
-
+        // 初始化SmallFileMergeConfig
+        mergeConfig = new SmallFileMergeConfig();
+        mergeConfig.setReportOutputDir(outputDir);
+        
         // 初始化测试数据
         results = new ArrayList<>();
         
@@ -72,7 +71,7 @@ public class ReportGeneratorTest {
     @Test
     public void testGenerateReport() throws IOException {
         // 创建报告生成器
-        ReportGenerator generator = new ReportGenerator(reportConfig, results);
+        ReportGenerator generator = new ReportGenerator(mergeConfig, results);
         
         // 生成报告
         File reportFile = generator.generateReport();

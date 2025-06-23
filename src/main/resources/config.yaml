@@ -6,20 +6,20 @@ small-file-merge:
   # Hive表扫描配置
   hive-databases:
     - db-name: testdb # 数据库1
-      includes: p.*  # 包含的表名模式(正则)，不配置则包含所有表
-      excludes: test_.*,tmp_.* # 排除的表名模式(正则)，不配置则不排除任何表
+      includes:   # 包含的表名模式(正则)，不配置则包含所有表
+      excludes: p.* # 排除的表名模式(正则)，不配置则不排除任何表
 #    - db-name: db2 # 数据库2
 #      includes:   # 空值表示包含所有表
 #      excludes: pat_.*  # 排除特定表
 
   # 试运行模式(不实际执行合并)
-  dry-run: true
+  dry-run: false
   # 临时目录位置
   temp-dir: /tmp/merge_temp
   # 备份目录位置，当cleanup=false时必须配置
   backup-dir: /backup/merge
   # 合并后是否清理原文件
-  cleanup: true
+  cleanup: false
   # HDFS块大小设置
   hdfs-block-size: 128MB  # 目标文件大小(支持单位: B, KB, MB, GB)，可选参数，不配置默认为hdfs文件块大小
   # 线程池配置
