@@ -41,47 +41,26 @@ repositories {
     mavenCentral()
 }
 
-configurations {
-    // 创建一个新的配置，用于IDEA运行时包含所有依赖
-    developmentOnly
-    // 让compileClasspath继承developmentOnly配置
-    compileClasspath.extendsFrom(developmentOnly)
-    // 让runtimeClasspath继承developmentOnly配置
-    runtimeClasspath.extendsFrom(developmentOnly)
-}
-
 dependencies {
     // 日志依赖 - 这些会被打包
     implementation "org.slf4j:slf4j-api:${slf4jVersion}"
     implementation "ch.qos.logback:logback-classic:${logbackVersion}"
 
     // Hadoop 依赖 - 只在编译时需要，不打包
-    compileOnly "org.apache.hadoop:hadoop-client:${hadoopVersion}"
-    compileOnly "org.apache.hadoop:hadoop-common:${hadoopVersion}"
-    compileOnly "org.apache.hadoop:hadoop-hdfs:${hadoopVersion}"
-    // 为IDEA运行添加Hadoop依赖
-    developmentOnly "org.apache.hadoop:hadoop-client:${hadoopVersion}"
-    developmentOnly "org.apache.hadoop:hadoop-common:${hadoopVersion}"
-    developmentOnly "org.apache.hadoop:hadoop-hdfs:${hadoopVersion}"
+    implementation "org.apache.hadoop:hadoop-client:${hadoopVersion}"
+    implementation "org.apache.hadoop:hadoop-common:${hadoopVersion}"
+    implementation "org.apache.hadoop:hadoop-hdfs:${hadoopVersion}"
 
     // Hive 依赖 - 只在编译时需要，不打包
-    compileOnly "org.apache.hive:hive-exec:${hiveVersion}"
-    compileOnly "org.apache.hive:hive-metastore:${hiveVersion}"
-    // 为IDEA运行添加Hive依赖
-    developmentOnly "org.apache.hive:hive-exec:${hiveVersion}"
-    developmentOnly "org.apache.hive:hive-metastore:${hiveVersion}"
-
+    implementation "org.apache.hive:hive-exec:${hiveVersion}"
+    implementation "org.apache.hive:hive-metastore:${hiveVersion}"
 
     // Spark 依赖 - 只在编译时需要，不打包
-    compileOnly ("org.apache.spark:spark-core_2.12:${sparkVersion}"){transitive = true }
-    compileOnly "org.apache.spark:spark-sql_2.12:${sparkVersion}"
-    compileOnly ("org.apache.spark:spark-hive_2.12:${sparkVersion}")
-    compileOnly "org.apache.spark:spark-launcher_2.12:${sparkVersion}"
-    // 为IDEA运行添加Spark依赖
-    developmentOnly ("org.apache.spark:spark-core_2.12:${sparkVersion}"){transitive = true }
-    developmentOnly "org.apache.spark:spark-sql_2.12:${sparkVersion}"
-    developmentOnly ("org.apache.spark:spark-hive_2.12:${sparkVersion}")
-    developmentOnly "org.apache.spark:spark-launcher_2.12:${sparkVersion}"
+    implementation "org.apache.spark:spark-core_2.12:${sparkVersion}"
+    implementation "org.apache.spark:spark-sql_2.12:${sparkVersion}"
+    implementation "org.apache.spark:spark-hive_2.12:${sparkVersion}"
+    implementation "org.apache.spark:spark-launcher_2.12:${sparkVersion}"
+
 
     // Jackson 依赖 - 这些会被打包
     implementation "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
@@ -105,22 +84,19 @@ dependencies {
     // 基础测试框架
     testImplementation "junit:junit:${junitVersion}"
 
-    // Hadoop MiniCluster 测试依赖
-    testImplementation ("org.apache.hadoop:hadoop-minicluster:${hadoopVersion}"){transitive = true }
-    testImplementation ("org.apache.hadoop:hadoop-mapreduce-client-jobclient:${hadoopVersion}"){transitive = true }
     // 测试时需要这些实现依赖
-    testImplementation ("org.apache.hadoop:hadoop-common:${hadoopVersion}"){transitive = true }
-    testImplementation ("org.apache.hadoop:hadoop-hdfs:${hadoopVersion}"){transitive = true }
-    testImplementation ("org.apache.hive:hive-metastore:${hiveVersion}") {transitive = true }
-    testImplementation("org.apache.hive:hive-exec:${hiveVersion}") {transitive = true }
+    testImplementation "org.apache.hadoop:hadoop-common:${hadoopVersion}"
+    testImplementation "org.apache.hadoop:hadoop-hdfs:${hadoopVersion}"
+    testImplementation "org.apache.hive:hive-metastore:${hiveVersion}"
+    testImplementation"org.apache.hive:hive-exec:${hiveVersion}"
 
     // Hive 测试依赖
-    testImplementation ("org.apache.derby:derby:${derbyVersion}") {transitive = true }
+    testImplementation "org.apache.derby:derby:${derbyVersion}"
     testImplementation "org.apache.hive:hive-jdbc:${hiveVersion}"
 
     // Spark 测试依赖
-    testImplementation ("org.apache.spark:spark-sql_2.12:${sparkVersion}"){transitive = true }
-    testImplementation ("org.apache.spark:spark-hive_2.12:${sparkVersion}"){transitive = true }
+    testImplementation "org.apache.spark:spark-sql_2.12:${sparkVersion}"
+    testImplementation "org.apache.spark:spark-hive_2.12:${sparkVersion}"
 }
 
 application {
@@ -172,24 +148,5 @@ configurations.all {
         force 'org.apache.logging.log4j:log4j-api:2.17.2'
         force 'org.apache.logging.log4j:log4j-core:2.17.2'
         force "org.apache.thrift:libfb303:0.9.2"
-//        force "org.apache.thrift:libthrift:0.9.2"
     }
-    
-    // 排除 libfb303 依赖
-//    exclude group: 'org.apache.thrift', module: 'libfb303'
 }
-/*
-configurations.all {
-//    exclude group: 'org.slf4j', module: 'slf4j-log4j12'
-//    exclude group: 'log4j', module: 'log4j'
-    exclude group: 'javax.servlet', module: 'servlet-api'
-    exclude group: 'javax.servlet.jsp', module: 'jsp-api'
-    exclude group: 'org.mortbay.jetty', module: 'servlet-api-3.0'
-
-    resolutionStrategy {
-        force "com.google.guava:guava:30.1.1-jre"
-        force "com.fasterxml.jackson.core:jackson-databind:${jacksonVersion}"
-        force "com.fasterxml.jackson.core:jackson-core:${jacksonVersion}"
-
-    }
-}*/

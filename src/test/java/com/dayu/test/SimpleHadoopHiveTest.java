@@ -23,7 +23,7 @@ public class SimpleHadoopHiveTest {
     @Test
     public void testHDFS() {
         Configuration conf = new Configuration();
-        conf.set("fs.defaultFS", "hdfs://172.22.84.111:8020/");
+        conf.set("fs.defaultFS", "hdfs://namenode:8020/");
         try {
             // 获取文件系统实例
             FileSystem fs = FileSystem.get(URI.create(conf.get("fs.defaultFS")), conf);
