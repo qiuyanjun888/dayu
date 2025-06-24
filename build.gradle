@@ -141,16 +141,17 @@ tasks.register('fatJar', Jar) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     
     from sourceSets.main.output
-    dependsOn configurations.runtimeClasspath
+    
+    // 创建一个包含所有运行时依赖但排除Hadoop/Spark/Hive依赖的配置
+    def runtimeWithoutHadoopSparkHive = configurations.runtimeClasspath.copyRecursive { dependency ->
+        def groupId = dependency.group
+        !(groupId.startsWith('org.apache.hadoop') || 
+          groupId.startsWith('org.apache.spark') || 
+          groupId.startsWith('org.apache.hive'))
+    }
+    
     from {
-        // 只包含implementation依赖，不包含compileOnly和developmentOnly依赖
-        configurations.runtimeClasspath.findAll { 
-            it.name.endsWith('jar') && 
-            !it.name.contains('hadoop') && 
-            !it.name.contains('spark') && 
-            !it.name.contains('hive') && 
-            !it.name.contains('hdfs')
-        }.collect { zipTree(it) }
+        runtimeWithoutHadoopSparkHive.collect { it.isDirectory() ? it : zipTree(it) }
     }
     
     manifest {

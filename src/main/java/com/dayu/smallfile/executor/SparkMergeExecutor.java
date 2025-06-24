@@ -15,7 +15,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.concurrent.Callable;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Spark合并执行器
@@ -23,6 +26,8 @@ import java.util.concurrent.Callable;
  */
 public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
     private static final Logger logger = LoggerFactory.getLogger(SparkMergeExecutor.class);
+    // 匹配HDFS URI前缀的正则表达式
+    private static final Pattern HDFS_PREFIX_PATTERN = Pattern.compile("^hdfs://[^/]+");
     
     private final HiveTblMergePath mergePath;
     private final Config config;
@@ -52,7 +57,10 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
                 return result;
             }
             
-            String tempDir = buildTempDirPath(mergeConfig);
+            String tempDir = buildTempDirPath(mergeConfig, path);
+            
+            // 确保临时目录存在
+            ensureDirectoryExists(new Path(tempDir));
             
             // 执行合并操作
             mergeSmallFiles(path, fileFormat, tempDir);
@@ -82,6 +90,47 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
     }
     
     /**
+     * 确保目录存在，如果不存在则创建
+     */
+    private void ensureDirectoryExists(Path path) throws IOException {
+        if (!fs.exists(path)) {
+            logger.info("目录不存在，创建目录: {}", path);
+            fs.mkdirs(path);
+        }
+    }
+    
+    /**
+     * 移除HDFS URI前缀
+     * 例如: hdfs://namenode:8020/path/to/file -> /path/to/file
+     */
+    private String removeHdfsPrefix(String path) {
+        if (path == null) {
+            return null;
+        }
+        
+        Matcher matcher = HDFS_PREFIX_PATTERN.matcher(path);
+        if (matcher.find()) {
+            return path.substring(matcher.end());
+        }
+        return path;
+    }
+    
+    /**
+     * 获取路径的相对部分（保留完整路径结构）
+     */
+    private String getRelativePath(String path) {
+        // 首先移除HDFS前缀
+        String cleanPath = removeHdfsPrefix(path);
+        
+        // 确保路径以/开头
+        if (!cleanPath.startsWith("/")) {
+            cleanPath = "/" + cleanPath;
+        }
+        
+        return cleanPath;
+    }
+    
+    /**
      * 初始化合并结果对象
      */
     private HiveTblMergeResult initializeResult(String path, String fileFormat) {
@@ -99,8 +148,24 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
     /**
      * 构建临时目录路径
      */
-    private String buildTempDirPath(SmallFileMergeConfig mergeConfig) {
-        return mergeConfig.getTempDir() + "/" + mergePath.getTargetPath();
+    private String buildTempDirPath(SmallFileMergeConfig mergeConfig, String originalPath) {
+        // 获取相对路径部分（保留完整目录结构）
+        String relativePath = getRelativePath(originalPath);
+        
+        // 构建临时路径
+        String tempDir = mergeConfig.getTempDir();
+        if (!tempDir.endsWith("/")) {
+            tempDir += "/";
+        }
+        
+        // 如果relativePath以/开头，去掉第一个/以避免双斜杠
+        if (relativePath.startsWith("/")) {
+            relativePath = relativePath.substring(1);
+        }
+        
+        String result = tempDir + relativePath;
+        logger.info("构建临时路径: 原始路径={}, 临时路径={}", originalPath, result);
+        return result;
     }
     
     /**
@@ -111,7 +176,11 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
         
         Dataset<Row> df = spark.read().format(fileFormat).load(path);
         
-        df.repartition(mergePath.getTargetNum())
+        // 确保分区数至少为1
+        int partitions = Math.max(1, mergePath.getTargetNum());
+        logger.info("使用分区数: {}, 原始计算分区数: {}", partitions, mergePath.getTargetNum());
+        
+        df.repartition(partitions)
           .write()
           .format(fileFormat)
           .mode("overwrite")
@@ -226,6 +295,20 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
         // 将临时目录重命名为原目录
         logger.info("将临时目录重命名为原目录: {} -> {}", tempPath, originalPath);
         fs.rename(tempPath, originalPath);
+        
+        // 删除_SUCCESS文件
+        deleteSuccessFile(fs, originalPath);
+    }
+    
+    /**
+     * 删除目录中的_SUCCESS文件
+     */
+    private void deleteSuccessFile(FileSystem fs, Path dirPath) throws IOException {
+        Path successFilePath = new Path(dirPath, "_SUCCESS");
+        if (fs.exists(successFilePath)) {
+            logger.info("删除_SUCCESS文件: {}", successFilePath);
+            fs.delete(successFilePath, false);
+        }
     }
     
     /**
@@ -247,9 +330,44 @@ public class SparkMergeExecutor implements Callable<HiveTblMergeResult> {
             throw new IOException("未配置备份目录，无法执行备份操作");
         }
         
-        Path backupPath = new Path(backupDir + "/" + originalPath.getName() + "_" + System.currentTimeMillis());
+        // 确保备份目录存在
+        Path backupDirPath = new Path(backupDir);
+        ensureDirectoryExists(backupDirPath);
+        
+        // 获取原路径的相对部分（保留完整目录结构）
+        String relativePath = getRelativePath(originalPath.toString());
+        
+        // 构建备份路径，添加时间戳作为后缀
+        String backupPathStr = backupDir;
+        if (!backupPathStr.endsWith("/")) {
+            backupPathStr += "/";
+        }
+        
+        // 如果relativePath以/开头，去掉第一个/以避免双斜杠
+        if (relativePath.startsWith("/")) {
+            relativePath = relativePath.substring(1);
+        }
+        
+        // 在路径的最后部分添加时间戳
+        String timestamp = "_" + System.currentTimeMillis();
+        int lastSlashIndex = relativePath.lastIndexOf("/");
+        if (lastSlashIndex >= 0) {
+            String dirPart = relativePath.substring(0, lastSlashIndex);
+            String namePart = relativePath.substring(lastSlashIndex);
+            relativePath = dirPart + namePart + timestamp;
+        } else {
+            relativePath = relativePath + timestamp;
+        }
+        
+        Path backupPath = new Path(backupPathStr + relativePath);
         logger.info("备份原目录: {} -> {}", originalPath, backupPath);
+        
         if (fs.exists(originalPath)) {
+            // 确保父目录存在
+            Path parent = backupPath.getParent();
+            if (parent != null) {
+                ensureDirectoryExists(parent);
+            }
             fs.rename(originalPath, backupPath);
         }
     }

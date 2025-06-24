@@ -17,7 +17,6 @@ import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.IMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.MetaException;
-import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,7 +32,11 @@ import java.util.stream.Collectors;
  */
 public class HiveTableScanStrategy implements ScanStrategy {
     private static final Logger logger = LoggerFactory.getLogger(HiveTableScanStrategy.class);
+    private static final int PROGRESS_REPORT_INTERVAL = 10;
+    
     private ProgressBarUtil progressBar;
+    private int directoriesScanned = 0;
+    private int totalDirectories = 0;
 
     @Override
     public List<HiveTblMergePath> scan(Config config) throws Exception {
@@ -41,246 +44,261 @@ public class HiveTableScanStrategy implements ScanStrategy {
         IMetaStoreClient metaStoreClient = null;
 
         try {
-            // 创建Hive元数据客户端
             metaStoreClient = createMetaStoreClient();
-            
-            // 获取配置
             SmallFileMergeConfig mergeConfig = config.getSmallFileMerge();
-            
-            // 获取Hive数据库配置
             List<HiveDatabase> databases = mergeConfig.getHiveDatabases();
+            long fileBlockSize = getTargetFileSize(mergeConfig);
 
-            // 目标文件大小，用于判断是否为小文件
-            long fileBlockSize = 0l;
-            String size = mergeConfig.getHdfsBlockSize();
-            if (StringUtils.isNotEmpty(size)) {
-                fileBlockSize = DayuStringUtils.parseSize(size);
-            } else {
-                fileBlockSize = HdfsUtils.getHdfsDefaultBlockSize();
-            }
-
-            // 初始化进度条，先统计总表数量
-            int totalTables = 0;
-            for (HiveDatabase db : databases) {
-                String dbName = db.getDbName();
-                try {
-                    List<String> allDatabases = metaStoreClient.getAllDatabases();
-                    if (!allDatabases.contains(dbName)) {
-                        continue;
-                    }
-                    
-                    List<String> allTables = metaStoreClient.getAllTables(dbName);
-                    totalTables += allTables.size();
-                } catch (Exception e) {
-                    logger.error("获取数据库 {} 的表数量失败: {}", dbName, e.getMessage());
-                }
+            // 第一步：确定需要处理的表
+            Map<String, List<String>> dbTableMap = identifyTablesToProcess(metaStoreClient, databases);
+            int totalMatchedTables = countTotalTables(dbTableMap);
+            
+            if (totalMatchedTables == 0) {
+                logger.warn("没有找到符合条件的表，扫描结束");
+                return mergePaths;
             }
             
-            // 创建进度条
-            progressBar = new ProgressBarUtil(totalTables, "扫描Hive表");
-            int processedTables = 0;
+            // 第二步：处理符合条件的表
+            processTables(metaStoreClient, dbTableMap, fileBlockSize, mergePaths);
             
-            // 遍历配置的数据库
-            for (HiveDatabase db : databases) {
-                String dbName = db.getDbName();
-                logger.info("扫描数据库: {}", dbName);
-                
-                // 首先检查数据库是否存在
-                try {
-                    // 获取所有数据库名称
-                    List<String> allDatabases = metaStoreClient.getAllDatabases();
-                    if (!allDatabases.contains(dbName)) {
-                        logger.error("数据库 {} 在Metastore中不存在，跳过处理", dbName);
-                        continue; // 跳过此数据库，继续下一个
-                    }
-                    
-                    // 数据库存在，继续处理
-                    String includeStr = db.getIncludes();
-                    String excludesStr = db.getExcludes();
-
-                    List<String> includes = new ArrayList<>();
-                    if (StringUtils.isNotEmpty(includeStr)) {
-                        includes = Arrays.asList(includeStr.split(","));
-                    }
-
-                    List<String> excludes = new ArrayList<>();
-                    if (StringUtils.isNotEmpty(excludesStr)) {
-                        excludes = Arrays.asList(excludesStr.split(","));
-                    }
-
-                    // 编译正则表达式
-                    List<Pattern> includePatterns = compilePatterns(includes);
-                    List<Pattern> excludePatterns = compilePatterns(excludes);
-
-                    // 获取数据库中的所有表
-                    List<String> allTables = metaStoreClient.getAllTables(dbName);
-
-                    // 根据正则表达式过滤表名
-                    List<String> matchedTables = allTables.stream()
-                            .filter(tableName -> (includePatterns.isEmpty() || matchesAny(tableName, includePatterns))
-                                    && (excludePatterns.isEmpty() || !matchesAny(tableName, excludePatterns)))
-                            .collect(Collectors.toList());
-
-                    logger.info("数据库 {} 中匹配的表数量: {}", dbName, matchedTables.size());
-
-                    // 遍历匹配的表，获取存储位置
-                    for (String tableName : matchedTables) {
-                        try {
-                            // 获取表详情
-                            Table table = metaStoreClient.getTable(dbName, tableName);
-                            String location = table.getSd().getLocation();
-                            String inputFormat = table.getSd().getInputFormat();
-
-                            if (location != null && inputFormat != null) {
-                                // 从InputFormat推断文件格式
-                                String fileFormat = getFileFormatFromInputFormat(inputFormat);
-                                if (fileFormat == null) {
-                                    logger.error("不支持的文件格式: {}, 表: {}.{}", inputFormat, dbName, tableName);
-                                    progressBar.update(false);
-                                    processedTables++;
-                                    continue;
-                                }
-
-                                // 创建HDFS文件系统客户端
-                                Configuration hadoopConf = new Configuration();
-                                FileSystem fs = FileSystem.get(hadoopConf);
-
-                                // 递归扫描表目录，找到所有根目录
-                                scanTableLocation(fs, new Path(location), fileFormat, fileBlockSize, mergePaths, dbName, tableName);
-                                
-                                // 更新进度条
-                                progressBar.update(true);
-                                processedTables++;
-                            } else {
-                                progressBar.update(false);
-                                processedTables++;
-                            }
-                        } catch (Exception e) {
-                            logger.warn("处理表 {}.{} 时出错: {}", dbName, tableName, e.getMessage());
-                            progressBar.update(false);
-                            processedTables++;
-                        }
-                    }
-                    
-                    // 更新未匹配表的进度
-                    int unmatchedTables = allTables.size() - matchedTables.size();
-                    for (int i = 0; i < unmatchedTables; i++) {
-                        progressBar.update(false);
-                        processedTables++;
-                    }
-                } catch (Exception e) {
-                    logger.error("获取数据库 {} 的信息失败: {}", dbName, e.getMessage());
-                }
-            }
-            
-            // 安全关闭Hive元数据客户端
-            try {
-                if (metaStoreClient != null) {
-                    metaStoreClient.close();
-                }
-            } catch (Exception e) {
-                logger.warn("关闭Hive元数据客户端时出错: {}", e.getMessage());
-            }
-            
-            // 完成进度条
-            progressBar.complete();
             logger.info("扫描完成，共找到 {} 个需要合并的路径", mergePaths.size());
+            return mergePaths;
         } catch (Exception e) {
             logger.error("扫描Hive表失败", e);
             throw e;
         } finally {
-            // 确保在finally块中安全关闭客户端
-            if (metaStoreClient != null) {
-                try {
-                    metaStoreClient.close();
-                } catch (Exception e) {
-                    logger.warn("在finally块中关闭Hive元数据客户端时出错: {}", e.getMessage());
+            closeClientSafely(metaStoreClient);
+        }
+    }
+    
+    private long getTargetFileSize(SmallFileMergeConfig mergeConfig) throws Exception {
+        String size = mergeConfig.getHdfsBlockSize();
+        return StringUtils.isNotEmpty(size) ? 
+               DayuStringUtils.parseSize(size) : 
+               HdfsUtils.getHdfsDefaultBlockSize();
+    }
+    
+    private Map<String, List<String>> identifyTablesToProcess(IMetaStoreClient metaStoreClient, 
+                                                             List<HiveDatabase> databases) {
+        Map<String, List<String>> dbTableMap = new HashMap<>();
+        
+        for (HiveDatabase db : databases) {
+            String dbName = db.getDbName();
+            try {
+                if (!databaseExists(metaStoreClient, dbName)) {
+                    continue;
                 }
+
+                List<Pattern> includePatterns = compilePatterns(getIncludesList(db));
+                List<Pattern> excludePatterns = compilePatterns(getExcludesList(db));
+                List<String> allTables = metaStoreClient.getAllTables(dbName);
+                List<String> matchedTables = filterTablesByPattern(allTables, includePatterns, excludePatterns);
+
+                if (!matchedTables.isEmpty()) {
+                    dbTableMap.put(dbName, matchedTables);
+                    logger.info("数据库 {} 中符合条件的表数量: {}", dbName, matchedTables.size());
+                }
+            } catch (Exception e) {
+                logger.error("获取数据库 {} 的表信息失败: {}", dbName, e.getMessage());
             }
         }
-        return mergePaths;
+        
+        return dbTableMap;
     }
     
-    /**
-     * 创建Hive元数据客户端
-     *
-     * @return Hive元数据客户端
-     * @throws MetaException 如果创建失败
-     */
+    private boolean databaseExists(IMetaStoreClient client, String dbName) throws Exception {
+        List<String> allDatabases = client.getAllDatabases();
+        if (!allDatabases.contains(dbName)) {
+            logger.error("数据库 {} 在Metastore中不存在，跳过处理", dbName);
+            return false;
+        }
+        return true;
+    }
+    
+    private List<String> getIncludesList(HiveDatabase db) {
+        String includeStr = db.getIncludes();
+        return StringUtils.isNotEmpty(includeStr) ? 
+               Arrays.asList(includeStr.split(",")) : 
+               Collections.emptyList();
+    }
+    
+    private List<String> getExcludesList(HiveDatabase db) {
+        String excludesStr = db.getExcludes();
+        return StringUtils.isNotEmpty(excludesStr) ? 
+               Arrays.asList(excludesStr.split(",")) : 
+               Collections.emptyList();
+    }
+    
+    private List<String> filterTablesByPattern(List<String> allTables, 
+                                              List<Pattern> includePatterns, 
+                                              List<Pattern> excludePatterns) {
+        return allTables.stream()
+                .filter(tableName -> (includePatterns.isEmpty() || matchesAny(tableName, includePatterns))
+                        && (excludePatterns.isEmpty() || !matchesAny(tableName, excludePatterns)))
+                .collect(Collectors.toList());
+    }
+    
+    private int countTotalTables(Map<String, List<String>> dbTableMap) {
+        return dbTableMap.values().stream().mapToInt(List::size).sum();
+    }
+    
+    private void processTables(IMetaStoreClient metaStoreClient, 
+                              Map<String, List<String>> dbTableMap, 
+                              long fileBlockSize,
+                              List<HiveTblMergePath> mergePaths) {
+        int totalTables = countTotalTables(dbTableMap);
+        progressBar = new ProgressBarUtil(totalTables, "扫描Hive表");
+        int processedTables = 0;
+        
+        for (Map.Entry<String, List<String>> entry : dbTableMap.entrySet()) {
+            String dbName = entry.getKey();
+            List<String> tables = entry.getValue();
+            
+            logger.info("开始处理数据库: {}, 表数量: {}", dbName, tables.size());
+            
+            for (String tableName : tables) {
+                try {
+                    processTable(metaStoreClient, dbName, tableName, fileBlockSize, mergePaths);
+                    progressBar.update(true);
+                } catch (Exception e) {
+                    logger.warn("处理表 {}.{} 时出错: {}", dbName, tableName, e.getMessage());
+                    progressBar.update(false);
+                }
+                processedTables++;
+            }
+        }
+        
+        progressBar.complete();
+    }
+    
+    private void processTable(IMetaStoreClient metaStoreClient, 
+                             String dbName, 
+                             String tableName, 
+                             long fileBlockSize,
+                             List<HiveTblMergePath> mergePaths) throws Exception {
+        Table table = metaStoreClient.getTable(dbName, tableName);
+        String location = table.getSd().getLocation();
+        String inputFormat = table.getSd().getInputFormat();
+
+        if (location == null || inputFormat == null) {
+            logger.warn("表 {}.{} 的位置或输入格式为空", dbName, tableName);
+            return;
+        }
+        
+        String fileFormat = getFileFormatFromInputFormat(inputFormat);
+        if (fileFormat == null) {
+            logger.error("不支持的文件格式: {}, 表: {}.{}", inputFormat, dbName, tableName);
+            return;
+        }
+
+        FileSystem fs = FileSystem.get(new Configuration());
+        Path tablePath = new Path(location);
+        
+        // 重置目录计数器并预计算目录数量
+        resetDirectoryCounters();
+        countDirectories(fs, tablePath);
+        
+        // 扫描表目录
+        scanTableLocation(fs, tablePath, fileFormat, fileBlockSize, mergePaths, dbName, tableName);
+    }
+    
+    private void resetDirectoryCounters() {
+        directoriesScanned = 0;
+        totalDirectories = 0;
+    }
+    
+    private void countDirectories(FileSystem fs, Path path) throws IOException {
+        if (!fs.exists(path) || isHiddenDirectory(path)) {
+            return;
+        }
+        
+        totalDirectories++;
+        
+        for (FileStatus status : fs.listStatus(path)) {
+            if (status.isDirectory() && !isHiddenPath(status.getPath())) {
+                countDirectories(fs, status.getPath());
+            }
+        }
+    }
+    
+    private boolean isHiddenDirectory(Path path) {
+        return path.getName().startsWith(".");
+    }
+    
+    private boolean isHiddenPath(Path path) {
+        return path.getName().startsWith(".");
+    }
+    
     private IMetaStoreClient createMetaStoreClient() throws MetaException {
-        HiveConf hiveConf = new HiveConf();
-        return new HiveMetaStoreClient(hiveConf);
+        return new HiveMetaStoreClient(new HiveConf());
     }
     
-    /**
-     * 递归扫描表目录，找到所有根目录（只包含文件的目录）
-     *
-     * @param fs 文件系统
-     * @param path 路径
-     * @param fileFormat 文件格式
-     * @param fileBlockSize 目标文件大小
-     * @param mergePaths 合并路径列表
-     * @param dbName 数据库名
-     * @param tableName 表名
-     * @throws IOException 如果读取文件系统失败
-     */
+    private void closeClientSafely(IMetaStoreClient client) {
+        if (client != null) {
+            try {
+                client.close();
+            } catch (Exception e) {
+                logger.warn("关闭Hive元数据客户端时出错: {}", e.getMessage());
+            }
+        }
+    }
+    
     private void scanTableLocation(FileSystem fs, Path path, String fileFormat, long fileBlockSize,
                                   List<HiveTblMergePath> mergePaths, String dbName, String tableName) throws IOException {
-        if (!fs.exists(path)) {
-            logger.warn("路径不存在: {}", path);
+        if (!fs.exists(path) || isHiddenDirectory(path)) {
             return;
         }
         
-        // 获取路径名称，如果以.开头，则跳过处理
-        String pathName = path.getName();
-        if (pathName.startsWith(".")) {
-            logger.info("跳过以.开头的目录: {}", path);
-            return;
-        }
+        updateDirectoryScanProgress();
         
-        // 获取目录下的所有文件和子目录
         FileStatus[] statuses = fs.listStatus(path);
-        
-        // 检查是否为根目录（只包含文件的目录）
         boolean hasSubDir = false;
         boolean hasFiles = false;
         
         for (FileStatus status : statuses) {
             if (status.isDirectory()) {
-                // 忽略以.开头的目录
-                if (!status.getPath().getName().startsWith(".")) {
+                if (!isHiddenPath(status.getPath())) {
                     hasSubDir = true;
-                    // 递归扫描子目录
                     scanTableLocation(fs, status.getPath(), fileFormat, fileBlockSize, mergePaths, dbName, tableName);
-                } else {
-                    logger.debug("跳过以.开头的子目录: {}", status.getPath());
                 }
             } else if (!status.getPath().getName().startsWith("_")) {
                 hasFiles = true;
             }
         }
         
-        // 如果是根目录（有文件且没有子目录），则检查是否需要合并
         if (hasFiles && !hasSubDir) {
             checkAndAddMergePath(fs, path, fileFormat, fileBlockSize, mergePaths, dbName, tableName);
         }
     }
     
-    /**
-     * 检查目录是否需要合并，如果需要则添加到合并路径列表
-     *
-     * @param fs 文件系统
-     * @param path 目录路径
-     * @param fileFormat 文件格式
-     * @param fileBlockSize 目标文件大小
-     * @param mergePaths 合并路径列表
-     * @param dbName 数据库名
-     * @param tableName 表名
-     * @throws IOException 如果读取文件系统失败
-     */
+    private void updateDirectoryScanProgress() {
+        directoriesScanned++;
+        
+        if (totalDirectories > 0 && directoriesScanned % PROGRESS_REPORT_INTERVAL == 0) {
+            int progressPercentage = (int)((directoriesScanned * 100.0) / totalDirectories);
+            logger.debug("目录扫描进度: {}/{} ({}%)", directoriesScanned, totalDirectories, progressPercentage);
+        }
+    }
+    
     private void checkAndAddMergePath(FileSystem fs, Path path, String fileFormat, long fileBlockSize,
                                      List<HiveTblMergePath> mergePaths, String dbName, String tableName) throws IOException {
-        // 获取目录统计信息
+        FileStatistics stats = calculateDirectoryStatistics(fs, path);
+        
+        if (shouldMergeFiles(stats.fileCount, stats.avgFileSize, fileBlockSize)) {
+            HiveTblMergePath mergePath = new HiveTblMergePath(dbName, tableName, path.toString(), fileFormat);
+            mergePath.setFileCount(stats.fileCount);
+            mergePath.setDirSize(stats.totalSize);
+            int targetNum = (int) Math.ceil((double) stats.totalSize / fileBlockSize);
+            targetNum = Math.max(1, targetNum);
+            mergePath.setTargetNum(targetNum);
+            mergePaths.add(mergePath);
+            
+            logger.info("添加合并路径: db={}, table={}, path={}, 格式={}, 文件数={}, 总大小={}",
+                    dbName, tableName, path, fileFormat, stats.fileCount, stats.totalSize);
+        }
+    }
+    
+    private FileStatistics calculateDirectoryStatistics(FileSystem fs, Path path) throws IOException {
         FileStatus[] files = fs.listStatus(path);
         int fileCount = 0;
         long totalSize = 0;
@@ -292,65 +310,29 @@ public class HiveTableScanStrategy implements ScanStrategy {
             }
         }
         
-        // 计算平均文件大小
         long avgFileSize = fileCount > 0 ? totalSize / fileCount : 0;
-        
-        // 只有当文件数量大于等于2且平均文件大小小于目标文件大小时，才添加到合并路径
-        if (fileCount >= 2 && avgFileSize < fileBlockSize) {
-            HiveTblMergePath mergePath = new HiveTblMergePath(dbName, tableName, path.toString(), fileFormat);
-            mergePath.setFileCount(fileCount);
-
-            mergePaths.add(mergePath);
-            logger.info("添加合并路径: db={}, table={}, path={}, 格式={}",
-                    dbName, tableName, path, fileFormat);
-        }
+        return new FileStatistics(fileCount, totalSize, avgFileSize);
     }
     
-    /**
-     * 编译正则表达式模式列表
-     *
-     * @param patterns 正则表达式字符串列表
-     * @return 编译后的Pattern列表
-     */
+    private boolean shouldMergeFiles(int fileCount, long avgFileSize, long targetSize) {
+        return fileCount >= 2 && avgFileSize < targetSize;
+    }
+    
     private List<Pattern> compilePatterns(List<String> patterns) {
-        List<Pattern> result = new ArrayList<>();
-        if (patterns != null && !patterns.isEmpty()) {
-            for (String pattern : patterns) {
-                if (pattern != null && !pattern.trim().isEmpty()) {
-                    result.add(Pattern.compile(pattern.trim()));
-                }
-            }
-        }
-        return result;
+        return patterns.stream()
+                .filter(pattern -> pattern != null && !pattern.trim().isEmpty())
+                .map(pattern -> Pattern.compile(pattern.trim()))
+                .collect(Collectors.toList());
     }
     
-    /**
-     * 检查字符串是否匹配任一模式
-     *
-     * @param str 要检查的字符串
-     * @param patterns 模式列表
-     * @return 是否匹配
-     */
     private boolean matchesAny(String str, List<Pattern> patterns) {
         if (patterns.isEmpty()) {
-            return true; // 如果没有模式，默认匹配
+            return true;
         }
         
-        for (Pattern pattern : patterns) {
-            if (pattern.matcher(str).matches()) {
-                return true;
-            }
-        }
-        
-        return false;
+        return patterns.stream().anyMatch(pattern -> pattern.matcher(str).matches());
     }
     
-    /**
-     * 从InputFormat类名推断文件格式
-     *
-     * @param inputFormat InputFormat类名
-     * @return 文件格式，如果不支持则返回null
-     */
     private String getFileFormatFromInputFormat(String inputFormat) {
         if (inputFormat == null) {
             logger.error("InputFormat为空");
@@ -370,6 +352,18 @@ public class HiveTableScanStrategy implements ScanStrategy {
         } else {
             logger.error("不支持的文件格式: {}", inputFormat);
             return null;
+        }
+    }
+    
+    private static class FileStatistics {
+        final int fileCount;
+        final long totalSize;
+        final long avgFileSize;
+        
+        FileStatistics(int fileCount, long totalSize, long avgFileSize) {
+            this.fileCount = fileCount;
+            this.totalSize = totalSize;
+            this.avgFileSize = avgFileSize;
         }
     }
 }
