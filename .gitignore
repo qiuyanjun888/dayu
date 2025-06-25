@@ -1,0 +1,62 @@
+# Gradle 相关忽略项
+.gradle/
+build/
+gradle-app.setting
+!gradle-wrapper.jar
+!gradle-wrapper.properties
+.gradletasknamecache
+**/build/
+
+# IDEA 相关忽略项
+.idea/
+*.iml
+*.iws
+*.ipr
+.idea_modules/
+out/
+
+# 编译输出忽略项
+bin/
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.rar
+hs_err_pid*
+
+# 日志文件忽略项
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 系统文件忽略项
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# 临时文件忽略项
+*.tmp
+*.bak
+*.swp
+*~.nib
+local.properties
+.settings/
+.loadpath
+.recommenders
+.project
+.classpath
+.factorypath
+
+# 其他常见忽略项
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

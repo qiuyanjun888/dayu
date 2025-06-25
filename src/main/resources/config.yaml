@@ -1,0 +1,50 @@
+# 小文件合并工具配置文件
+# 版本: 1.0
+
+# 小文件合并配置
+small-file-merge:
+  # Hive表扫描配置
+  hive-databases:
+    - db-name: testdb # 数据库1
+      includes:   # 包含的表名模式(正则)，不配置则包含所有表
+      excludes: p.* # 排除的表名模式(正则)，不配置则不排除任何表
+#    - db-name: db2 # 数据库2
+#      includes:   # 空值表示包含所有表
+#      excludes: pat_.*  # 排除特定表
+
+  # 试运行模式(不实际执行合并)
+  dry-run: false
+  # 临时目录位置
+  temp-dir: /tmp/merge_temp
+  # 备份目录位置，当cleanup=false时必须配置
+  backup-dir: /backup/merge
+  # 合并后是否清理原文件
+  cleanup: false
+  # HDFS块大小设置
+  hdfs-block-size: 128MB  # 目标文件大小(支持单位: B, KB, MB, GB)，可选参数，不配置默认为hdfs文件块大小
+  # 线程池配置
+  thread-pool-size: 10  # 线程池大小
+  # 报告输出目录
+  report-output-dir: /var/log/merge-tool
+
+# HDFS文件压缩配置
+hdfs-compress:
+  # 生产者线程数
+  producer-threads: 3
+  # 消费者线程数
+  consumer-threads: 10
+  # 报告输出目录
+  report-output-dir: /var/log/compress
+  # 路径配置
+  paths:
+    - root-path: /data/1/log # 根路径
+      recursive: true # 是否递归
+      threshold: 1KB # 文件的阈值
+      includes: "*.txt,*.dat" # 需要压缩的文件正则表达式
+      excludes: "*.log,*.xls" # 不需要压缩的文件正则表达式
+
+    - root-path: /data/1/files # 根路径
+      recursive: false # 是否递归
+      threshold: 100MB # 文件的阈值
+      includes:  # 需要压缩的文件正则表达式, 不配置表示所有文件
+      excludes:  # 不需要压缩的文件正则表达式，不配置表示没有文件需要排除 
